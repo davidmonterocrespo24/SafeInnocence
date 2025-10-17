@@ -30,7 +30,32 @@ class ContentAnalyzer {
       "sex",
       "gore",
       "explicit",
-    ]; // ejemplo
+    ]; 
+
+    this.safetySchema = {
+      "type": "object",
+      "properties": {
+        "inappropriate": { 
+          "type": "boolean",
+          "description": "True if the content is inappropriate for children, false otherwise." 
+        },
+        "reason": { 
+          "type": "string",
+          "description": "A brief explanation for why the content was flagged."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "The severity level of the inappropriate content."
+        },
+        "categories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "A list of categories the content falls into (e.g., 'violence', 'adult_content')."
+        }
+      },
+      "required": ["inappropriate", "reason", "severity", "categories"]
+    };
   }
 
   /**
@@ -111,10 +136,70 @@ class ContentAnalyzer {
         this.hideProgressIndicator();
         // Set up mutation observer for dynamic content
         this.setupMutationObserver();
+
+        // Set up YouTube navigation listener (for SPA navigation)
+        if (this.socialMediaPlatform === "youtube") {
+          this.setupYouTubeNavigationListener();
+        }
       }
     } catch (error) {
       console.error("SafeInnocence initialization error:", error);
     }
+  }
+
+  /**
+   * Setup YouTube navigation listener for SPA navigation detection
+   */
+  setupYouTubeNavigationListener() {
+    console.log("SafeInnocence: Setting up YouTube navigation listener");
+
+    let lastUrl = window.location.href;
+
+    // Listen for URL changes (YouTube uses SPA navigation)
+    const checkUrlChange = () => {
+      const currentUrl = window.location.href;
+
+      if (currentUrl !== lastUrl) {
+        console.log(
+          `SafeInnocence: YouTube navigation detected - ${lastUrl} → ${currentUrl}`
+        );
+        lastUrl = currentUrl;
+
+        // Reset blocked content counter for new page
+        this.blockedContentCount = 0;
+        this.analyzedImages = 0;
+
+        // Wait for new content to load, then re-analyze
+        setTimeout(async () => {
+          console.log(
+            "SafeInnocence: Re-analyzing YouTube page after navigation"
+          );
+          this.showProgressIndicator();
+          await this.analyzeSocialMediaContent();
+          this.hideProgressIndicator();
+        }, 1000); // Wait 1 second for content to load
+      }
+    };
+
+    // Check URL changes every 500ms
+    setInterval(checkUrlChange, 500);
+
+    // Also listen to YouTube's pushState/replaceState
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+
+    history.pushState = function () {
+      originalPushState.apply(this, arguments);
+      checkUrlChange();
+    };
+
+    history.replaceState = function () {
+      originalReplaceState.apply(this, arguments);
+      checkUrlChange();
+    };
+
+    // Listen to popstate (browser back/forward)
+    window.addEventListener("popstate", checkUrlChange);
   }
 
   /**
@@ -547,12 +632,86 @@ class ContentAnalyzer {
     }
   }
 
+  // Convierte ImageBitmap / blob / canvas -> Blob o dataURL aceptable por la API
+  async ensureImageIsBlobOrDataURL(imageData) {
+    try {
+      // Si ya es un Blob -> devolverlo
+      if (imageData instanceof Blob) return imageData;
+
+      // ImageBitmap -> dibujar en canvas y blob
+      if (
+        typeof ImageBitmap !== "undefined" &&
+        imageData instanceof ImageBitmap
+      ) {
+        const canvas = document.createElement("canvas");
+        canvas.width = imageData.width;
+        canvas.height = imageData.height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(imageData, 0, 0);
+        return await new Promise((res) =>
+          canvas.toBlob(res, "image/jpeg", 0.8)
+        );
+      }
+
+      // Si es un object con .type==='image' y value es blob/data -> pasar
+      // (por compatibilidad con otra parte del código)
+      if (imageData && imageData.type === "image" && imageData.value) {
+        return imageData.value;
+      }
+
+      // Si es un HTMLImageElement o <img> -> dibujar
+      if (
+        imageData &&
+        imageData.tagName &&
+        imageData.tagName.toLowerCase() === "img"
+      ) {
+        const canvas = document.createElement("canvas");
+        const w = Math.min(
+          512,
+          imageData.naturalWidth || imageData.width || 512
+        );
+        const h = Math.min(
+          512,
+          imageData.naturalHeight || imageData.height || 512
+        );
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(imageData, 0, 0, w, h);
+        return await new Promise((res) =>
+          canvas.toBlob(res, "image/jpeg", 0.8)
+        );
+      }
+
+      // fallback: if it's a Canvas or OffscreenCanvas
+      if (imageData instanceof HTMLCanvasElement) {
+        return await new Promise((res) =>
+          imageData.toBlob(res, "image/jpeg", 0.8)
+        );
+      }
+
+      // última opción: si es un ArrayBuffer o similar, intentar envolver en Blob
+      if (imageData && imageData.buffer) {
+        return new Blob([imageData.buffer], { type: "image/jpeg" });
+      }
+
+      // No convertible -> null
+      return null;
+    } catch (err) {
+      console.warn("SafeInnocence: ensureImageIsBlobOrDataURL failed:", err);
+      return null;
+    }
+  }
+
   // callAIWithTimeout: wrapper que envuelve this.session.prompt con timeout
   async callAIWithTimeout(imageBlobOrBitmap, { img, timeout = 15000 } = {}) {
     // construir payload según tu API: si session.prompt acepta createImageBitmap, pásalo
     const ac = new AbortController();
     const id = setTimeout(() => ac.abort(), timeout);
     try {
+      const imageForApi = await this.ensureImageIsBlobOrDataURL(
+        imageBlobOrBitmap
+      );
       const prompt = [
         {
           role: "user",
@@ -561,13 +720,14 @@ class ContentAnalyzer {
               type: "text",
               value: "Analiza esta imagen para contenido inapropiado...",
             },
-            { type: "image", value: imageBlobOrBitmap },
+            { type: "image", value: imageForApi },
           ],
         },
       ];
       const respPromise = this.session.prompt(prompt, {
         outputLanguage: "en",
         signal: ac.signal,
+        responseConstraint: this.safetySchema, 
       });
       const response = await respPromise;
       clearTimeout(id);
@@ -648,6 +808,33 @@ class ContentAnalyzer {
       return false;
     }
 
+    let textResult = null;
+    try {
+      textResult = await this.analyzeTextContent();
+    } catch (e) {
+      console.warn("SafeInnocence: analyzePage - text analysis failed:", e);
+      textResult = null;
+    }
+
+    // Si el análisis de texto indicó inapropiado con severidad alta -> bloquear ya
+    if (textResult && textResult.inappropriate) {
+      // actualiza contador según severidad (consistente con otras partes)
+      this.blockedContentCount +=
+        textResult.severity === "high"
+          ? 5
+          : textResult.severity === "medium"
+          ? 3
+          : 1;
+
+      // Si es alta severidad, bloqueamos inmediatamente sin analizar imágenes
+      if (textResult.severity === "high") {
+        this.pageAnalysisResult = textResult;
+        // ocultar el indicador si está visible y bloquear
+        this.hideProgressIndicator();
+        this.blockPage(textResult.reason || "High severity text flagged");
+        return true;
+      }
+    }
     // If social media, analyze comments instead of blocking page
     if (this.isSocialMedia) {
       return await this.analyzeSocialMediaContent();
@@ -740,71 +927,131 @@ class ContentAnalyzer {
     }
   }
 
+  extractCleanPageText(maxLength = 1000, minLength = 150) {
+    // Select potentially meaningful text containers
+    const textNodes = document.querySelectorAll(
+      "article, main, section, p, h1, h2, h3, h4, h5, h6, li, blockquote, span, div"
+    );
+
+    let fullText = "";
+    const seen = new Set();
+
+    textNodes.forEach((el) => {
+      // Skip hidden or irrelevant elements
+      const style = window.getComputedStyle(el);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        el.offsetParent === null ||
+        el.closest("header, footer, nav, form, aside, script, style, noscript")
+      ) {
+        return;
+      }
+
+      // Extract text and clean duplicates
+      let text = el.innerText || "";
+      text = text.trim();
+
+      // Avoid repetitive short or duplicate lines
+      if (text.length < 30 || seen.has(text)) return;
+      seen.add(text);
+
+      // Append to the collected text
+      fullText += text + "\n";
+    });
+
+    // Normalize and clean text
+    let cleanedText = fullText
+      .replace(/(\r\n|\n|\r)/gm, " ") // remove all line breaks
+      .replace(/\s+/g, " ") // collapse multiple spaces
+      .replace(/[^\S\r\n]+/g, " ") // remove invisible spacing chars
+      .replace(/\u00A0/g, " ") // replace non-breaking spaces
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .trim();
+
+    // Cut off if too long
+    const textToAnalyze = cleanedText.substring(0, maxLength);
+
+    if (textToAnalyze.length < minLength) {
+      console.warn("SafeInnocence: Not enough text content to analyze.");
+      return null;
+    }
+
+    console.log(
+      "SafeInnocence: Extracted and cleaned text sample:",
+      textToAnalyze.slice(0, 300) + "..."
+    );
+    return textToAnalyze;
+  }
   /**
    * Analyze text content on the page
    */
   async analyzeTextContent() {
     try {
-      if (!this.session) return;
+      if (!this.session) {
+        console.warn(
+          "SafeInnocence: AI session not available for text analysis."
+        );
+        return null; // Sé explícito al devolver null
+      }
 
       // Get main text content
-      const textElements = document.querySelectorAll(
-        "p, article, h1, h2, h3, div.content"
+      const textToAnalyze = this.extractCleanPageText(800);
+
+      // --- FIX: Añadir esta validación ---
+      // Si no hay suficiente texto, no continúes.
+      if (!textToAnalyze) {
+        console.log(
+          "SafeInnocence: Skipping text analysis, not enough content found on page."
+        );
+        return null;
+      }
+
+      console.log(
+        "SafeInnocence: Analyzing text content:",
+        textToAnalyze
       );
-      let fullText = "";
 
-      textElements.forEach((el) => {
-        fullText += el.innerText + "\n";
-      });
-
-      // Limit text length
-      const textToAnalyze = fullText.substring(0, 5000);
-
-      if (textToAnalyze.length < 100) {
-        return; // Not enough text to analyze
-      }
-
-      // Summarize content first if summarizer is available
-      let contentSummary = textToAnalyze;
-      if (this.summarizer) {
-        contentSummary = await this.summarizer.summarize(textToAnalyze, {
-          context: "Summarize the main topics and themes of this content",
-        });
-      }
-
-      // Analyze content for appropriateness
       const prompt = `Analyze this content to determine if it's appropriate for children (under 13).
+                      Check for these specific categories:
+                      - Cyberbullying: Personal attacks, degrading language, intimidation
+                      - Hate Speech: Discriminatory content targeting race, gender, religion, sexuality
+                      - Threats: Threats of violence or harm
+                      - Self-Harm: Content promoting self-harm or suicide
+                      - Misinformation: False or misleading information
+                      - Adult Content: Sexual or explicit material
+                      - Substance Abuse: Promoting drugs or alcohol abuse
+                      - Personal Information: Exposed PII (addresses, phone numbers, emails)
+                      - Extremism: Violent extremism or radicalization
+                      - Violence: Graphic violence, gore, disturbing themes
 
-                     Check for these specific categories:
-                     - Cyberbullying: Personal attacks, degrading language, intimidation
-                     - Hate Speech: Discriminatory content targeting race, gender, religion, sexuality
-                     - Threats: Threats of violence or harm
-                     - Self-Harm: Content promoting self-harm or suicide
-                     - Misinformation: False or misleading information
-                     - Adult Content: Sexual or explicit material
-                     - Substance Abuse: Promoting drugs or alcohol abuse
-                     - Personal Information: Exposed PII (addresses, phone numbers, emails)
-                     - Extremism: Violent extremism or radicalization
-                     - Violence: Graphic violence, gore, disturbing themes
+                      Content: ${textToAnalyze}
 
-                     Content: ${contentSummary}
-
-                     Respond only with JSON format: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`;
+                      Respond only with JSON format: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`;
 
       const response = await this.session.prompt(prompt, {
         outputLanguage: "en",
+        responseConstraint: this.safetySchema,
       });
+
+      // --- MEJORA DE DEBUGGING: Muestra la respuesta cruda de la IA ---
+      console.log("SafeInnocence: Raw AI Response for text:", response);
+
       const result = this.parseAIResponse(response);
 
       if (result && result.inappropriate) {
         this.blockedContentCount +=
           result.severity === "high" ? 5 : result.severity === "medium" ? 3 : 1;
-
-        // Store the analysis result
         this.pageAnalysisResult = result;
       }
+
+      // Asegúrate de devolver siempre el resultado
+      return result;
     } catch (error) {
       console.error("SafeInnocence: Text analysis error:", error);
+      // Devuelve null explícitamente en caso de error
+      return null;
     }
   }
 
@@ -812,100 +1059,14 @@ class ContentAnalyzer {
    * Parse AI response
    */
   parseAIResponse(response) {
-    try {
-      // Try to extract JSON from response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-
-      // Fallback: check for keywords
-      const lowerResponse = response.toLowerCase();
-      const categories = [];
-
-      if (
-        lowerResponse.includes("cyberbullying") ||
-        lowerResponse.includes("bullying")
-      ) {
-        categories.push("cyberbullying");
-      }
-      if (
-        lowerResponse.includes("hate speech") ||
-        lowerResponse.includes("discriminatory")
-      ) {
-        categories.push("hate_speech");
-      }
-      if (lowerResponse.includes("threat")) {
-        categories.push("threats");
-      }
-      if (
-        lowerResponse.includes("self-harm") ||
-        lowerResponse.includes("suicide")
-      ) {
-        categories.push("self_harm");
-      }
-      if (
-        lowerResponse.includes("misinformation") ||
-        lowerResponse.includes("false")
-      ) {
-        categories.push("misinformation");
-      }
-      if (
-        lowerResponse.includes("adult") ||
-        lowerResponse.includes("sexual") ||
-        lowerResponse.includes("explicit")
-      ) {
-        categories.push("adult_content");
-      }
-      if (
-        lowerResponse.includes("substance") ||
-        lowerResponse.includes("drugs") ||
-        lowerResponse.includes("alcohol")
-      ) {
-        categories.push("substance_abuse");
-      }
-      if (
-        lowerResponse.includes("personal information") ||
-        lowerResponse.includes("pii")
-      ) {
-        categories.push("personal_information");
-      }
-      if (
-        lowerResponse.includes("extremism") ||
-        lowerResponse.includes("radicalization")
-      ) {
-        categories.push("extremism");
-      }
-      if (
-        lowerResponse.includes("violence") ||
-        lowerResponse.includes("violent") ||
-        lowerResponse.includes("gore")
-      ) {
-        categories.push("violence");
-      }
-
-      if (
-        lowerResponse.includes("inappropriate") ||
-        lowerResponse.includes("not safe") ||
-        categories.length > 0
-      ) {
-        return {
-          inappropriate: true,
-          reason:
-            categories.length > 0
-              ? `Detected: ${categories.join(", ")}`
-              : "Content flagged by AI analysis",
-          severity: "medium",
-          categories: categories,
-        };
-      }
-
-      return null;
-    } catch (error) {
-      console.error("SafeInnocence: Response parsing error:", error);
-      return null;
-    }
+  try {
+    // ¡Mucho más simple y seguro!
+    return JSON.parse(response);
+  } catch (error) {    
+    // Devuelve un objeto nulo o con un formato de error por si algo muy extraño ocurre.
+    return null; 
   }
+}
 
   /**
    * Analyze social media content (comments, posts)
@@ -960,14 +1121,19 @@ class ContentAnalyzer {
    */
   async analyzeSocialMediaImages() {
     try {
+      console.log("SafeInnocence: Starting social media image analysis");
       const images = Array.from(document.querySelectorAll("img"));
+      console.log(`SafeInnocence: Found ${images.length} total images on page`);
 
       // Filter and categorize images
       const thumbnails = [];
       const otherImages = [];
 
       images.forEach((img) => {
-        const area = img.naturalWidth * img.naturalHeight;
+        // For lazy-loaded images, use offsetWidth/offsetHeight if naturalWidth not available
+        const width = img.naturalWidth || img.offsetWidth || img.width || 0;
+        const height = img.naturalHeight || img.offsetHeight || img.height || 0;
+        const area = width * height;
 
         // Check if it's a video thumbnail or post image based on selectors and size
         const isYoutubeThumbnail = img.closest(
@@ -1113,6 +1279,7 @@ class ContentAnalyzer {
 
       const response = await this.session.prompt(prompt, {
         outputLanguage: "en",
+        responseConstraint: this.safetySchema,
       });
 
       console.log(`SafeInnocence: AI Response for comment:`, response);
