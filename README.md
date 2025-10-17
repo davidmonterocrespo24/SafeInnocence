@@ -393,13 +393,7 @@ Setup ScrollObserver (analyze lazy-loaded content)
 - ✅ Passwords hashed with SHA-256
 - ✅ All storage is local (Chrome Storage API)
 
-**Data Stored Locally**:
-- User settings (sensitivity, thresholds)
-- Blocked sites list (URLs, timestamps, reasons)
-- Master password hash (SHA-256)
-- Statistics (pages analyzed, content blocked)
-- Theme preference
-- Image analysis cache (24h TTL)
+
 
 ## Development
 
@@ -443,23 +437,6 @@ Potential enhancements for future versions:
 
 Contributions are welcome! This is an educational project demonstrating Chrome's built-in AI capabilities.
 
-### How to Contribute
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
-
-### Areas for Contribution
-
-- 🐛 Bug fixes
-- ✨ New features
-- 📝 Documentation improvements
-- 🌍 Translations
-- 🎨 UI/UX enhancements
-- ⚡ Performance optimizations
-- 🧪 Test coverage
 
 ## License
 
@@ -597,6 +574,5 @@ SafeInnocence is designed with **privacy-first principles**:
 
 ---
 
-**Made with ❤️ for child safety**
 
 *Protecting innocence in the digital age*
