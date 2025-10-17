@@ -13,24 +13,59 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: #f5f5f5;
+      background: #1a1a2e;
       padding: 40px 20px;
+      transition: background 0.3s ease;
+    }
+
+    body.light-mode {
+      background: #f0f4f8;
     }
 
     .container {
       max-width: 800px;
       margin: 0 auto;
-      background: white;
+      background: #16213e;
       border-radius: 12px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
       overflow: hidden;
+      transition: background 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .container.light-mode {
+      background: white;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     }
 
     .header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #7c3aed 0%, #10b981 100%);
       color: white;
       padding: 40px;
       text-align: center;
+      position: relative;
+    }
+
+    .theme-toggle {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .theme-toggle:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(1.05);
     }
 
     .header-icon {
@@ -50,6 +85,12 @@
 
     .content {
       padding: 40px;
+      background: #16213e;
+      transition: background 0.3s ease;
+    }
+
+    .content.light-mode {
+      background: white;
     }
 
     .section {
@@ -60,10 +101,15 @@
       font-size: 20px;
       font-weight: 600;
       margin-bottom: 20px;
-      color: #333;
+      color: #10b981;
       display: flex;
       align-items: center;
       gap: 10px;
+      transition: color 0.3s ease;
+    }
+
+    .section-title.light-mode {
+      color: #7c3aed;
     }
 
     .form-group {
@@ -74,28 +120,155 @@
       display: block;
       font-weight: 500;
       margin-bottom: 8px;
+      color: #e0e0e0;
+      transition: color 0.3s ease;
+    }
+
+    .form-label.light-mode {
       color: #333;
     }
 
     .form-description {
       display: block;
       font-size: 14px;
-      color: #666;
+      color: #a0a0a0;
       margin-bottom: 12px;
+      transition: color 0.3s ease;
     }
 
-    select, input[type="number"] {
+    .form-description.light-mode {
+      color: #666;
+    }
+
+    select, input[type="number"], input[type="password"] {
       width: 100%;
       padding: 12px;
-      border: 2px solid #e0e0e0;
+      border: 2px solid #2d3748;
       border-radius: 8px;
       font-size: 14px;
-      transition: border-color 0.3s;
+      background: #1a202c;
+      color: #e0e0e0;
+      transition: all 0.3s;
     }
 
-    select:focus, input[type="number"]:focus {
+    select.light-mode, input[type="number"].light-mode, input[type="password"].light-mode {
+      background: white;
+      color: #333;
+      border-color: #e0e0e0;
+    }
+
+    select:focus, input[type="number"]:focus, input[type="password"]:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: #10b981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+
+    .blocked-site-item {
+      background: #1a202c;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.3s;
+    }
+
+    .blocked-site-item.light-mode {
+      background: #fff;
+      border-color: #e0e0e0;
+    }
+
+    .blocked-site-item:hover {
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+      border-color: #10b981;
+    }
+
+    .blocked-site-info {
+      flex: 1;
+    }
+
+    .blocked-site-url {
+      font-weight: 500;
+      color: #e0e0e0;
+      margin-bottom: 4px;
+      word-break: break-all;
+      transition: color 0.3s ease;
+    }
+
+    .blocked-site-url.light-mode {
+      color: #333;
+    }
+
+    .blocked-site-meta {
+      font-size: 12px;
+      color: #a0a0a0;
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      transition: color 0.3s ease;
+    }
+
+    .blocked-site-meta.light-mode {
+      color: #999;
+    }
+
+    .blocked-site-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+
+    .badge-total {
+      background: #ffebee;
+      color: #c62828;
+    }
+
+    .badge-partial {
+      background: #fff3e0;
+      color: #e65100;
+    }
+
+    .badge-unblocked {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .blocked-site-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-small {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-unblock {
+      background: #4CAF50;
+      color: white;
+    }
+
+    .btn-unblock:hover {
+      background: #45a049;
+    }
+
+    .btn-remove {
+      background: #f44336;
+      color: white;
+    }
+
+    .btn-remove:hover {
+      background: #da190b;
     }
 
     .checkbox-group {
@@ -103,13 +276,24 @@
       align-items: center;
       gap: 12px;
       padding: 16px;
-      background: #f9f9f9;
+      background: #1a202c;
+      border: 1px solid #2d3748;
       border-radius: 8px;
       cursor: pointer;
-      transition: background 0.3s;
+      transition: all 0.3s;
+    }
+
+    .checkbox-group.light-mode {
+      background: #f9f9f9;
+      border-color: transparent;
     }
 
     .checkbox-group:hover {
+      background: #2d3748;
+      border-color: #10b981;
+    }
+
+    .checkbox-group.light-mode:hover {
       background: #f0f0f0;
     }
 
@@ -142,54 +326,79 @@
     }
 
     .button-primary {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #7c3aed 0%, #10b981 100%);
       color: white;
     }
 
     .button-primary:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
     }
 
     .button-secondary {
+      background: #2d3748;
+      color: #e0e0e0;
+      transition: all 0.3s ease;
+    }
+
+    .button-secondary.light-mode {
       background: #e0e0e0;
       color: #333;
     }
 
     .button-secondary:hover {
+      background: #374151;
+    }
+
+    .button-secondary.light-mode:hover {
       background: #d0d0d0;
     }
 
     .ai-status {
-      background: #e3f2fd;
-      border-left: 4px solid #2196F3;
+      background: rgba(16, 185, 129, 0.1);
+      border-left: 4px solid #10b981;
       padding: 16px;
       border-radius: 8px;
       margin-bottom: 24px;
+      transition: all 0.3s ease;
+    }
+
+    .ai-status.light-mode {
+      background: #d1fae5;
     }
 
     .ai-status-title {
       font-weight: 600;
-      color: #1976D2;
+      color: #10b981;
       margin-bottom: 8px;
     }
 
     .ai-status-text {
       font-size: 14px;
+      color: #a0a0a0;
+      transition: color 0.3s ease;
+    }
+
+    .ai-status-text.light-mode {
       color: #555;
     }
 
     .warning {
-      background: #fff3e0;
-      border-left: 4px solid #ff9800;
+      background: rgba(124, 58, 237, 0.1);
+      border-left: 4px solid #7c3aed;
       padding: 16px;
       border-radius: 8px;
       margin-bottom: 24px;
+      transition: all 0.3s ease;
+    }
+
+    .warning.light-mode {
+      background: #ede9fe;
     }
 
     .warning-title {
       font-weight: 600;
-      color: #f57c00;
+      color: #7c3aed;
       margin-bottom: 8px;
     }
 
@@ -218,15 +427,27 @@
     }
 
     .info-box {
-      background: #f5f5f5;
+      background: #1a202c;
+      border: 1px solid #2d3748;
       padding: 20px;
       border-radius: 8px;
       margin-top: 24px;
+      transition: all 0.3s ease;
+    }
+
+    .info-box.light-mode {
+      background: #f5f5f5;
+      border-color: transparent;
     }
 
     .info-box h3 {
       margin-bottom: 12px;
-      color: #333;
+      color: #10b981;
+      transition: color 0.3s ease;
+    }
+
+    .info-box.light-mode h3 {
+      color: #7c3aed;
     }
 
     .info-box ul {
@@ -236,12 +457,17 @@
 
     .info-box li {
       padding: 8px 0;
+      color: #a0a0a0;
+      transition: color 0.3s ease;
+    }
+
+    .info-box.light-mode li {
       color: #666;
     }
 
     .info-box li:before {
       content: "✓ ";
-      color: #4CAF50;
+      color: #10b981;
       font-weight: bold;
       margin-right: 8px;
     }
@@ -250,6 +476,10 @@
 <body>
   <div class="container">
     <div class="header">
+      <button class="theme-toggle" id="themeToggle">
+        <span id="themeIcon">☀️</span>
+        <span id="themeText">Light Mode</span>
+      </button>
       <div class="header-icon">🛡️</div>
       <h1>SafeInnocence Settings</h1>
       <p>Configure content protection for children</p>
@@ -342,6 +572,33 @@
               </span>
             </span>
           </label>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2 class="section-title">🔒 Master Password</h2>
+
+        <div class="form-group">
+          <label class="form-label">Set Master Password</label>
+          <span class="form-description">
+            Create a password to manage blocked sites. Leave empty to disable password protection.
+          </span>
+          <input type="password" id="masterPassword" placeholder="Enter master password">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Confirm Password</label>
+          <input type="password" id="confirmPassword" placeholder="Confirm master password">
+        </div>
+      </div>
+
+      <div class="section">
+        <h2 class="section-title">🚫 Blocked Sites</h2>
+
+        <div id="blockedSitesContainer">
+          <p class="form-description" id="noBlockedSites">No sites have been blocked yet.</p>
+
+          <div id="blockedSitesList"></div>
         </div>
       </div>
 

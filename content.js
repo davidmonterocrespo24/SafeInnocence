@@ -17,9 +17,20 @@ class ContentAnalyzer {
     this.isSocialMedia = false;
     this.socialMediaPlatform = null;
     this.settings = {
-      sensitivity: 'high',
-      enabled: true
+      sensitivity: "high",
+      enabled: true,
     };
+    this.imageCache = new Map(); // key: src or derived key, value: {result, ts}
+    this.analysisConcurrency = 2; // ajustar (3-6 recomendado)
+    this.analysisTimeoutMs = 15000; // timeout por llamada AI
+    this.prefilterKeywords = [
+      "porn",
+      "nsfw",
+      "adult",
+      "sex",
+      "gore",
+      "explicit",
+    ]; // ejemplo
   }
 
   /**
@@ -27,19 +38,48 @@ class ContentAnalyzer {
    */
   async init() {
     try {
+      console.log("SafeInnocence: Initializing content analyzer");
+
       // Load settings from storage
-      const stored = await chrome.storage.local.get(['settings']);
+      const stored = await chrome.storage.local.get([
+        "settings",
+        "blockedSites",
+      ]);
       if (stored.settings) {
         this.settings = { ...this.settings, ...stored.settings };
       }
 
+      console.log("SafeInnocence: Settings loaded:", this.settings);
+
       if (!this.settings.enabled) {
+        console.log("SafeInnocence: Extension is disabled");
+        return;
+      }
+
+      // Check if this page is already blocked
+      const currentUrl = window.location.href;
+      const blockedSites = stored.blockedSites || [];
+      const blockedSite = blockedSites.find(
+        (site) =>
+          currentUrl.includes(site.url) &&
+          site.blockType === "total" &&
+          !site.unblocked
+      );
+
+      if (blockedSite) {
+        console.log(
+          "SafeInnocence: Page already blocked, showing block screen"
+        );
+        // Show block page immediately
+        this.blockPage(
+          blockedSite.reason || "This page was previously blocked"
+        );
         return;
       }
 
       // Check if AI APIs are available
-      if (!('LanguageModel' in self && 'Summarizer' in self)) {
-        console.warn('SafeInnocence: AI APIs not available');
+      if (!("LanguageModel" in self && "Summarizer" in self)) {
+        console.warn("SafeInnocence: AI APIs not available");
         return;
       }
 
@@ -47,57 +87,460 @@ class ContentAnalyzer {
       this.detectSocialMedia();
 
       // Initialize AI models
+      console.log("SafeInnocence: Initializing AI models...");
       await this.initializeAI();
+
+      if (!this.session) {
+        console.error("SafeInnocence: Failed to initialize AI session");
+        return;
+      }
+
+      console.log("SafeInnocence: AI models initialized successfully");
 
       // Show progress indicator
       this.showProgressIndicator();
 
       // Start analyzing the page
-      await this.analyzePage();
+      console.log("SafeInnocence: Starting page analysis");
+      const pageWasBlocked = await this.analyzePage();
 
-      // Hide progress indicator
-      this.hideProgressIndicator();
+      console.log("SafeInnocence: Page analysis complete");
 
-      // Set up mutation observer for dynamic content
-      this.setupMutationObserver();
+      // Only hide progress indicator if page wasn't blocked
+      if (!pageWasBlocked) {
+        this.hideProgressIndicator();
+        // Set up mutation observer for dynamic content
+        this.setupMutationObserver();
+      }
     } catch (error) {
-      console.error('SafeInnocence initialization error:', error);
+      console.error("SafeInnocence initialization error:", error);
     }
   }
 
   /**
-   * Detect if page is a social media platform
+   * Detect if page is a social media platform or search engine
    */
   detectSocialMedia() {
     const hostname = window.location.hostname.toLowerCase();
     const url = window.location.href.toLowerCase();
 
+    // Check if it's Google Search - never block, only filter content
+    if (
+      (hostname.includes("google.com") || hostname.includes("google.")) &&
+      url.includes("/search")
+    ) {
+      this.isSocialMedia = true;
+      this.socialMediaPlatform = "google_search";
+      console.log(
+        "SafeInnocence: Detected Google Search - Using content filtering mode"
+      );
+      return;
+    }
+
+    // Check for other search engines
+    const searchEngines = {
+      "bing.com": "bing",
+      "duckduckgo.com": "duckduckgo",
+      "yahoo.com": "yahoo",
+      "yandex.com": "yandex",
+      "baidu.com": "baidu",
+    };
+
+    for (const [domain, engine] of Object.entries(searchEngines)) {
+      if (hostname.includes(domain)) {
+        this.isSocialMedia = true;
+        this.socialMediaPlatform = engine;
+        console.log(
+          `SafeInnocence: Detected ${engine} - Using content filtering mode`
+        );
+        return;
+      }
+    }
+
+    // Check for social media platforms
     const socialMediaDomains = {
-      'youtube.com': 'youtube',
-      'youtu.be': 'youtube',
-      'instagram.com': 'instagram',
-      'twitter.com': 'twitter',
-      'x.com': 'twitter',
-      'facebook.com': 'facebook',
-      'fb.com': 'facebook',
-      'tiktok.com': 'tiktok',
-      'reddit.com': 'reddit',
-      'discord.com': 'discord',
-      'twitch.tv': 'twitch',
-      'snapchat.com': 'snapchat',
-      'linkedin.com': 'linkedin',
-      'pinterest.com': 'pinterest',
-      'tumblr.com': 'tumblr',
-      'whatsapp.com': 'whatsapp'
+      "youtube.com": "youtube",
+      "youtu.be": "youtube",
+      "instagram.com": "instagram",
+      "twitter.com": "twitter",
+      "x.com": "twitter",
+      "facebook.com": "facebook",
+      "fb.com": "facebook",
+      "tiktok.com": "tiktok",
+      "reddit.com": "reddit",
+      "discord.com": "discord",
+      "twitch.tv": "twitch",
+      "snapchat.com": "snapchat",
+      "linkedin.com": "linkedin",
+      "pinterest.com": "pinterest",
+      "tumblr.com": "tumblr",
+      "whatsapp.com": "whatsapp",
     };
 
     for (const [domain, platform] of Object.entries(socialMediaDomains)) {
       if (hostname.includes(domain)) {
         this.isSocialMedia = true;
         this.socialMediaPlatform = platform;
-        console.log(`SafeInnocence: Detected ${platform} - Using comment filtering mode`);
+        console.log(
+          `SafeInnocence: Detected ${platform} - Using content filtering mode`
+        );
         return;
       }
+    }
+  }
+
+  async limitConcurrency(items, handler, limit = 4) {
+    const results = [];
+    const executing = new Set();
+    for (const item of items) {
+      const p = (async () => handler(item))();
+      results.push(p);
+      executing.add(p);
+      const clean = () => executing.delete(p);
+      p.then(clean).catch(clean);
+      if (executing.size >= limit) {
+        await Promise.race(executing);
+      }
+    }
+    return Promise.all(results);
+  }
+
+  // Helper: fast cheap prefilter
+  shouldAnalyzeImageFastCheck(img) {
+    // evita analizar iconos muy pequeños, sprites, data-urls, etc.
+    try {
+      if (!img.src) return false;
+      if ((img.naturalWidth || 0) * (img.naturalHeight || 0) < 5000)
+        return false; // muy pequeño
+      if (img.dataset.safeInnocenceAnalyzed) return false;
+      const srcLower = img.src.toLowerCase();
+      if (srcLower.startsWith("data:")) return true; // inline -> analyze
+      for (const kw of this.prefilterKeywords)
+        if (srcLower.includes(kw)) return true;
+      // usar alt/title/contexto: si contienen palabras clave
+      const contextText =
+        (img.alt || "") +
+        " " +
+        (img.title || "") +
+        " " +
+        ((img.closest &&
+          img.closest("figure,article,div")?.innerText?.slice(0, 200)) ||
+          "");
+      for (const kw of this.prefilterKeywords)
+        if (contextText.toLowerCase().includes(kw)) return true;
+      // otherwise, allow but deprioritize
+      return true;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  // Nuevo analyzeImages (optimizado)
+  async analyzeImages() {
+    if (!this.session) return;
+    console.log("SafeInnocence: Starting optimized image analysis");
+
+    const images = Array.from(document.querySelectorAll("img"));
+    // Priorizar visibles con IntersectionObserver
+    const visible = [];
+    const offscreen = [];
+
+    // tiny helper using synchronous bounding box (fast)
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    function isLikelyVisible(img) {
+      const r = img.getBoundingClientRect();
+      return !(
+        r.bottom < 0 ||
+        r.top > viewportHeight ||
+        r.right < 0 ||
+        r.left > viewportWidth
+      );
+    }
+
+    for (const img of images) {
+      if (!this.shouldAnalyzeImageFastCheck(img)) continue;
+      if (isLikelyVisible(img)) visible.push(img);
+      else offscreen.push(img);
+    }
+
+    // limita cantidad total para no sobrecargar
+    const toAnalyze = visible.concat(offscreen.slice(0, 40)); // visible first, then up to 40 offscreen
+    this.totalImages = toAnalyze.length;
+    this.analyzedImages = 0;
+
+    // handler por imagen: usa cache y concurrency
+    const handler = async (img) => {
+      // chequeo cache (puedes ampliar a IndexedDB)
+      const cacheKey =
+        img.src || img.dataset.src || "" || img.currentSrc || null;
+      if (cacheKey && this.imageCache.has(cacheKey)) {
+        const cached = this.imageCache.get(cacheKey);
+        // expiración simple: 24h
+        if (Date.now() - cached.ts < 24 * 60 * 60 * 1000) {
+          this.analyzedImages++;
+          this.updateProgress();
+          if (cached.result?.inappropriate) {
+            this.blurOrRemoveImage(img, cached.result);
+          }
+          img.dataset.safeInnocenceAnalyzed = "true";
+          return cached.result;
+        } else {
+          this.imageCache.delete(cacheKey);
+        }
+      }
+
+      // obtener blob/bitmap con timeout/abort
+      const imageBlobOrBitmap = await this.getImageData(img).catch(() => null);
+      if (!imageBlobOrBitmap) {
+        img.dataset.safeInnocenceAnalyzed = "true";
+        this.analyzedImages++;
+        this.updateProgress();
+        return null;
+      }
+
+      // Llamada AI con timeout
+      let result = null;
+      try {
+        result = await this.callAIWithTimeout(imageBlobOrBitmap, {
+          img,
+          timeout: this.analysisTimeoutMs,
+        });
+      } catch (e) {
+        console.warn("AI call failed or timed out for image", e);
+        result = null;
+      }
+
+      img.dataset.safeInnocenceAnalyzed = "true";
+      this.analyzedImages++;
+      this.updateProgress();
+
+      if (cacheKey) this.imageCache.set(cacheKey, { result, ts: Date.now() });
+      if (result?.inappropriate) this.blurOrRemoveImage(img, result);
+      return result;
+    };
+
+    // Ejecutar con límite de concurrencia
+    await this.limitConcurrency(toAnalyze, handler, this.analysisConcurrency);
+    console.log("SafeInnocence: Optimized image analysis finished");
+  }
+
+  /**
+   * Analiza una imagen para detectar contenido inapropiado utilizando IA.
+   * @param {HTMLElement} imgElement - El elemento de la imagen a analizar.
+   * @param {string} [size='medium'] - El tamaño de la imagen para el registro.
+   * @returns {Promise<object|null>} - El resultado del análisis o null si falla.
+   */
+  async analyzeImage(imgElement, size = "medium") {
+    try {
+      if (!this.session) {
+        return null;
+      }
+
+      // Omitir si la imagen ya fue analizada previamente
+      if (imgElement.dataset.safeInnocenceAnalyzed) {
+        return null;
+      }
+
+      // Convertir la imagen a datos para el análisis
+      const imageData = await this.getImageData(imgElement);
+
+      if (!imageData) {
+        imgElement.dataset.safeInnocenceAnalyzed = "true";
+        return null;
+      }
+
+      // Prompt para que la IA analice el contenido de la imagen
+      const prompt = `Analyze this image for inappropriate content for children.
+                    Check for: violence, adult content, self-harm, hate symbols, extremism, 
+                    cyberbullying, substance abuse, threats, disturbing imagery.
+
+                    Respond only with JSON format: {
+                      "inappropriate": boolean, 
+                      "reason": string, 
+                      "severity": "low"|"medium"|"high", 
+                      "categories": []
+                    }`;
+
+      console.log(
+        `SafeInnocence: Sending image analysis prompt for ${size} image`
+      );
+
+      const response = await this.session.prompt(
+        [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                value: prompt,
+              },
+              {
+                type: "image",
+                value: imageData,
+              },
+            ],
+          },
+        ],
+        {
+          outputLanguage: "en",
+        }
+      );
+
+      console.log(`SafeInnocence: AI Response for ${size} image:`, response);
+
+      const result = this.parseAIResponse(response);
+
+      if (result && result.inappropriate) {
+        this.blockedContentCount++;
+        this.blurOrRemoveImage(imgElement, result);
+      }
+
+      // Marcar la imagen como analizada para no repetirla
+      imgElement.dataset.safeInnocenceAnalyzed = "true";
+      imgElement.dataset.safeInnocenceSize = size;
+
+      return result;
+    } catch (error) {
+      console.error("SafeInnocence: Single image analysis error:", error);
+      // Marcar como analizada incluso si hay un error para evitar reintentos infinitos
+      imgElement.dataset.safeInnocenceAnalyzed = "true";
+      return null;
+    }
+  }
+
+  // Mejor getImageData usando createImageBitmap / OffscreenCanvas y reuso
+  async getImageData(imgElement) {
+    try {
+      // Si la imagen está cross-origin y no se puede fetch -> fall back
+      const isCross = this.isCrossOriginImage(imgElement);
+      // Intentar usar createImageBitmap con fetch(blob) (mejor performance)
+      let blob = null;
+      if (isCross) {
+        // intenta fetch con timeout y AbortController
+        try {
+          const ac = new AbortController();
+          const id = setTimeout(() => ac.abort(), 4000);
+          const resp = await fetch(imgElement.src, {
+            signal: ac.signal,
+            cache: "force-cache",
+          });
+          clearTimeout(id);
+          if (!resp.ok) throw new Error("fetch failed");
+          blob = await resp.blob();
+        } catch (e) {
+          // fall back: si no obtenemos blob, intentar captura via background (ext API) o devolver null
+          return null;
+        }
+      } else {
+        // same-origin: podemos crear bitmap directo desde <img> con createImageBitmap(img)
+        try {
+          if ("createImageBitmap" in window) {
+            const bmp = await createImageBitmap(imgElement);
+            return bmp; // createImageBitmap es aceptado por OffscreenCanvas o transferrable
+          }
+        } catch (e) {
+          // ignore y continuar
+        }
+        // fallback: fetch blob
+        try {
+          const resp = await fetch(imgElement.src, { cache: "force-cache" });
+          if (!resp.ok) throw new Error("fetch failed");
+          blob = await resp.blob();
+        } catch (e) {
+          // fallback to drawing from element into canvas
+          // we'll handle below
+        }
+      }
+
+      // Si tenemos blob -> createImageBitmap(blob)
+      if (blob) {
+        if ("createImageBitmap" in window) {
+          const bmp = await createImageBitmap(blob);
+          return bmp;
+        } else {
+          // fallback: convert blob -> img -> draw to canvas
+          const objectUrl = URL.createObjectURL(blob);
+          const temp = new Image();
+          temp.src = objectUrl;
+          await new Promise((res, rej) => {
+            temp.onload = res;
+            temp.onerror = rej;
+            setTimeout(res, 3000);
+          });
+          // draw to regular canvas
+          const canvas = document.createElement("canvas");
+          const maxDim = 512;
+          const w = Math.min(maxDim, temp.naturalWidth || temp.width);
+          const h = Math.min(maxDim, temp.naturalHeight || temp.height);
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(temp, 0, 0, w, h);
+          const blobOut = await new Promise((resolve) =>
+            canvas.toBlob(resolve, "image/jpeg", 0.7)
+          );
+          URL.revokeObjectURL(objectUrl);
+          return blobOut;
+        }
+      }
+
+      // último recurso: draw imageElement into canvas (same-origin or allowed)
+      const canvas = document.createElement("canvas");
+      const maxDim = 512;
+      let targetW = imgElement.naturalWidth || imgElement.width || 256;
+      let targetH = imgElement.naturalHeight || imgElement.height || 256;
+      if (targetW > maxDim || targetH > maxDim) {
+        const ratio = targetW / targetH;
+        if (targetW > targetH) {
+          targetW = maxDim;
+          targetH = Math.round(maxDim / ratio);
+        } else {
+          targetH = maxDim;
+          targetW = Math.round(maxDim * ratio);
+        }
+      }
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(imgElement, 0, 0, targetW, targetH);
+      return await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", 0.7)
+      );
+    } catch (err) {
+      // si se produce CORS/tainted -> devuelve null (skip)
+      return null;
+    }
+  }
+
+  // callAIWithTimeout: wrapper que envuelve this.session.prompt con timeout
+  async callAIWithTimeout(imageBlobOrBitmap, { img, timeout = 15000 } = {}) {
+    // construir payload según tu API: si session.prompt acepta createImageBitmap, pásalo
+    const ac = new AbortController();
+    const id = setTimeout(() => ac.abort(), timeout);
+    try {
+      const prompt = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              value: "Analiza esta imagen para contenido inapropiado...",
+            },
+            { type: "image", value: imageBlobOrBitmap },
+          ],
+        },
+      ];
+      const respPromise = this.session.prompt(prompt, {
+        outputLanguage: "en",
+        signal: ac.signal,
+      });
+      const response = await respPromise;
+      clearTimeout(id);
+      return this.parseAIResponse(response);
+    } catch (e) {
+      clearTimeout(id);
+      throw e;
     }
   }
 
@@ -109,17 +552,17 @@ class ContentAnalyzer {
       // Check availability of Prompt API
       const promptAvailability = await LanguageModel.availability();
 
-      if (promptAvailability === 'unavailable') {
-        console.warn('SafeInnocence: Prompt API unavailable');
+      if (promptAvailability === "unavailable") {
+        console.warn("SafeInnocence: Prompt API unavailable");
         return;
       }
 
       // Create language model session for content analysis with image support
+      console.log(
+        "SafeInnocence: Creating LanguageModel session with image support"
+      );
       this.session = await LanguageModel.create({
-        initialPrompts: [
-          {
-            role: 'system',
-            content: `You are a comprehensive content safety analyzer for child protection.
+        systemPrompt: `You are a comprehensive content safety analyzer for child protection.
                      Analyze content for the following categories:
 
                      - Cyberbullying: Personal attacks, degrading language, intimidation
@@ -134,289 +577,51 @@ class ContentAnalyzer {
                      - Violence: Violent, graphic, or disturbing imagery
 
                      Be extremely cautious and err on the side of protection.
-                     Respond with JSON format: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`
-          }
-        ],
+                     Respond with JSON format: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`,
         expectedInputs: [
           { type: "text", languages: ["en", "es"] },
-          { type: "image" }
+          { type: "image" },
         ],
-        expectedOutputs: [{ type: "text", languages: ["en"] }]
+        expectedOutputs: [{ type: "text", languages: ["en"] }],
+        outputLanguage: "en",
       });
+
+      console.log("SafeInnocence: LanguageModel session created successfully");
 
       // Check availability of Summarizer API
       const summarizerAvailability = await Summarizer.availability();
 
-      if (summarizerAvailability !== 'unavailable') {
+      if (summarizerAvailability !== "unavailable") {
         this.summarizer = await Summarizer.create({
-          type: 'key-points',
-          format: 'plain-text',
-          length: 'short'
+          type: "key-points",
+          format: "plain-text",
+          length: "short",
         });
       }
 
-      console.log('SafeInnocence: AI models initialized');
+      console.log("SafeInnocence: AI models initialized");
     } catch (error) {
-      console.error('SafeInnocence: AI initialization error:', error);
+      console.error("SafeInnocence: AI initialization error:", error);
     }
   }
 
   /**
    * Analyze the entire page
+   * @returns {Promise<boolean>} - True if page was blocked, false otherwise
    */
   async analyzePage() {
     if (!this.session) {
-      return;
+      return false;
     }
 
     // If social media, analyze comments instead of blocking page
     if (this.isSocialMedia) {
-      await this.analyzeSocialMediaContent();
+      return await this.analyzeSocialMediaContent();
     } else {
       // Regular page analysis
       await this.analyzeImages();
       await this.analyzeTextContent();
-      this.evaluatePageSafety();
-    }
-  }
-
-  /**
-   * Analyze images on the page
-   */
-  async analyzeImages() {
-    try {
-      // Get all images
-      const images = Array.from(document.querySelectorAll('img'));
-
-      // Sort by size (largest first)
-      images.sort((a, b) => {
-        const areaA = a.naturalWidth * a.naturalHeight;
-        const areaB = b.naturalWidth * b.naturalHeight;
-        return areaB - areaA;
-      });
-
-      // Categorize images by size
-      const largeImages = [];
-      const mediumImages = [];
-      const smallImages = [];
-
-      images.forEach(img => {
-        const area = img.naturalWidth * img.naturalHeight;
-        if (area > 300000) { // Large: > 547x547
-          largeImages.push(img);
-        } else if (area > 50000) { // Medium: > 224x224
-          mediumImages.push(img);
-        } else if (area > 10000) { // Small but significant
-          smallImages.push(img);
-        }
-      });
-
-      this.totalImages = largeImages.length + mediumImages.length + smallImages.length;
-      this.analyzedImages = 0;
-
-      // Analyze large images first
-      for (const img of largeImages) {
-        const result = await this.analyzeImage(img, 'large');
-        this.updateProgress();
-
-        if (result && result.inappropriate) {
-          // Block page immediately if large image is inappropriate
-          this.blockPage('Large inappropriate image detected');
-          return;
-        }
-      }
-
-      // Analyze medium images
-      for (const img of mediumImages) {
-        const result = await this.analyzeImage(img, 'medium');
-        this.updateProgress();
-
-        if (result && result.inappropriate) {
-          this.mediumImagesBlocked++;
-
-          // Block page if 3 or more medium images are inappropriate
-          if (this.mediumImagesBlocked >= 3) {
-            this.blockPage('Multiple inappropriate images detected');
-            return;
-          }
-        }
-      }
-
-      // Analyze small images
-      for (const img of smallImages.slice(0, 10)) {
-        await this.analyzeImage(img, 'small');
-        this.updateProgress();
-      }
-    } catch (error) {
-      console.error('SafeInnocence: Image analysis error:', error);
-    }
-  }
-
-  /**
-   * Analyze a single image
-   */
-  async analyzeImage(imgElement, size = 'medium') {
-    try {
-      if (!this.session) return null;
-
-      // Skip if already analyzed
-      if (imgElement.dataset.safeInnocenceAnalyzed) {
-        return null;
-      }
-
-      // Convert image to data for analysis
-      const imageData = await this.getImageData(imgElement);
-
-      if (!imageData) {
-        imgElement.dataset.safeInnocenceAnalyzed = 'true';
-        return null;
-      }
-
-      // Analyze image content using AI
-      const prompt = `Analyze this image for inappropriate content for children.
-                     Check for: violence, adult content, self-harm, hate symbols, extremism, cyberbullying, substance abuse, threats, disturbing imagery.
-                     Respond only with JSON format: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`;
-
-      const response = await this.session.prompt([
-        {
-          role: 'user',
-          content: [
-            { type: 'text', value: prompt },
-            { type: 'image', value: imageData }
-          ]
-        }
-      ], {
-        outputLanguage: 'en'
-      });
-
-      const result = this.parseAIResponse(response);
-
-      if (result && result.inappropriate) {
-        this.blockedContentCount++;
-        this.blurOrRemoveImage(imgElement, result);
-      }
-
-      imgElement.dataset.safeInnocenceAnalyzed = 'true';
-      imgElement.dataset.safeInnocenceSize = size;
-
-      return result;
-    } catch (error) {
-      console.error('SafeInnocence: Single image analysis error:', error);
-      imgElement.dataset.safeInnocenceAnalyzed = 'true';
-      return null;
-    }
-  }
-
-  /**
-   * Get image data for analysis
-   */
-  async getImageData(imgElement) {
-    try {
-      // Check if image is loaded
-      if (!imgElement.complete || imgElement.naturalWidth === 0) {
-        await new Promise((resolve) => {
-          imgElement.onload = resolve;
-          imgElement.onerror = resolve;
-          setTimeout(resolve, 2000);
-        });
-      }
-
-      // Calculate optimal size (max 512x512)
-      const maxDimension = 512;
-      const rect = imgElement.getBoundingClientRect();
-      let targetWidth = rect.width || imgElement.naturalWidth || imgElement.width;
-      let targetHeight = rect.height || imgElement.naturalHeight || imgElement.height;
-
-      if (targetWidth > maxDimension || targetHeight > maxDimension) {
-        const aspectRatio = targetWidth / targetHeight;
-        if (targetWidth > targetHeight) {
-          targetWidth = maxDimension;
-          targetHeight = Math.round(maxDimension / aspectRatio);
-        } else {
-          targetHeight = maxDimension;
-          targetWidth = Math.round(maxDimension * aspectRatio);
-        }
-      }
-
-      // Strategy 1: Try to use chrome.tabs.captureVisibleTab for screenshots
-      if (this.isCrossOriginImage(imgElement)) {
-        try {
-          // Get element position
-          const scrollX = window.scrollX;
-          const scrollY = window.scrollY;
-
-          // Use chrome API to capture screenshot
-          const dataUrl = await chrome.runtime.sendMessage({
-            action: 'captureElement',
-            rect: {
-              x: rect.left + scrollX,
-              y: rect.top + scrollY,
-              width: rect.width,
-              height: rect.height
-            }
-          });
-
-          if (dataUrl) {
-            const response = await fetch(dataUrl);
-            const blob = await response.blob();
-            return blob;
-          }
-        } catch (captureError) {
-          // Fall through to canvas method
-        }
-      }
-
-      // Strategy 2: Try fetch for cross-origin images
-      let imageToUse = imgElement;
-      const isCrossOrigin = this.isCrossOriginImage(imgElement);
-
-      if (isCrossOrigin) {
-        try {
-          const response = await fetch(imgElement.src);
-          if (!response.ok) throw new Error('Fetch failed');
-
-          const blob = await response.blob();
-          const objectUrl = URL.createObjectURL(blob);
-
-          const tempImg = new Image();
-          tempImg.src = objectUrl;
-
-          await new Promise((resolve, reject) => {
-            tempImg.onload = resolve;
-            tempImg.onerror = reject;
-            setTimeout(reject, 2000);
-          });
-
-          imageToUse = tempImg;
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
-        } catch (fetchError) {
-          // Silently skip if both strategies fail
-          return null;
-        }
-      }
-
-      // Strategy 3: Canvas rendering
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-      canvas.width = targetWidth;
-      canvas.height = targetHeight;
-
-      // Draw resized image
-      ctx.drawImage(imageToUse, 0, 0, targetWidth, targetHeight);
-
-      // Convert to blob
-      const blob = await new Promise(resolve => {
-        canvas.toBlob(resolve, 'image/jpeg', 0.7);
-      });
-
-      return blob;
-    } catch (error) {
-      // Silently skip CORS errors
-      if (error.name === 'SecurityError' || error.message?.includes('tainted')) {
-        return null;
-      }
-      return null;
+      return this.evaluatePageSafety();
     }
   }
 
@@ -436,15 +641,46 @@ class ContentAnalyzer {
    * Blur or remove inappropriate image
    */
   blurOrRemoveImage(imgElement, analysisResult) {
-    imgElement.style.filter = 'blur(20px)';
-    imgElement.style.pointerEvents = 'none';
-    imgElement.dataset.safeInnocenceBlocked = 'true';
-    imgElement.title = 'Content blocked by SafeInnocence: ' + analysisResult.reason;
+    // Check if element still exists in DOM
+    if (!imgElement.parentElement) {
+      return;
+    }
+
+    imgElement.style.filter = "blur(20px)";
+    imgElement.style.pointerEvents = "none";
+    imgElement.dataset.safeInnocenceBlocked = "true";
+    imgElement.title =
+      "Content blocked by SafeInnocence: " + analysisResult.reason;
+
+    // Check if this is a YouTube video thumbnail - disable the video link
+    const youtubeLink = imgElement.closest(
+      "a#thumbnail, ytd-thumbnail a, yt-thumbnail-view-model a"
+    );
+    if (youtubeLink) {
+      youtubeLink.style.pointerEvents = "none";
+      youtubeLink.style.cursor = "not-allowed";
+      youtubeLink.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      };
+      youtubeLink.href = "javascript:void(0)";
+
+      // Also disable the parent video container
+      const videoContainer = imgElement.closest(
+        "ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, ytd-playlist-video-renderer"
+      );
+      if (videoContainer) {
+        videoContainer.style.opacity = "0.5";
+        videoContainer.style.pointerEvents = "none";
+        videoContainer.style.cursor = "not-allowed";
+      }
+    }
 
     // Add overlay
-    const overlay = document.createElement('div');
-    overlay.className = 'safe-innocence-overlay';
-    overlay.textContent = '🛡️ Content Blocked';
+    const overlay = document.createElement("div");
+    overlay.className = "safe-innocence-overlay";
+    overlay.textContent = "🛡️ Content Blocked";
     overlay.style.cssText = `
       position: absolute;
       top: 50%;
@@ -456,13 +692,14 @@ class ContentAnalyzer {
       border-radius: 5px;
       font-weight: bold;
       z-index: 10000;
+      pointer-events: none;
     `;
 
     // Wrap image if needed
-    if (imgElement.parentElement.style.position !== 'relative') {
-      const wrapper = document.createElement('div');
-      wrapper.style.position = 'relative';
-      wrapper.style.display = 'inline-block';
+    if (imgElement.parentElement.style.position !== "relative") {
+      const wrapper = document.createElement("div");
+      wrapper.style.position = "relative";
+      wrapper.style.display = "inline-block";
       imgElement.parentElement.insertBefore(wrapper, imgElement);
       wrapper.appendChild(imgElement);
       wrapper.appendChild(overlay);
@@ -477,11 +714,13 @@ class ContentAnalyzer {
       if (!this.session) return;
 
       // Get main text content
-      const textElements = document.querySelectorAll('p, article, h1, h2, h3, div.content');
-      let fullText = '';
+      const textElements = document.querySelectorAll(
+        "p, article, h1, h2, h3, div.content"
+      );
+      let fullText = "";
 
-      textElements.forEach(el => {
-        fullText += el.innerText + '\n';
+      textElements.forEach((el) => {
+        fullText += el.innerText + "\n";
       });
 
       // Limit text length
@@ -495,7 +734,7 @@ class ContentAnalyzer {
       let contentSummary = textToAnalyze;
       if (this.summarizer) {
         contentSummary = await this.summarizer.summarize(textToAnalyze, {
-          context: 'Summarize the main topics and themes of this content'
+          context: "Summarize the main topics and themes of this content",
         });
       }
 
@@ -519,18 +758,19 @@ class ContentAnalyzer {
                      Respond only with JSON format: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`;
 
       const response = await this.session.prompt(prompt, {
-        outputLanguage: 'en'
+        outputLanguage: "en",
       });
       const result = this.parseAIResponse(response);
 
       if (result && result.inappropriate) {
-        this.blockedContentCount += result.severity === 'high' ? 5 : result.severity === 'medium' ? 3 : 1;
+        this.blockedContentCount +=
+          result.severity === "high" ? 5 : result.severity === "medium" ? 3 : 1;
 
         // Store the analysis result
         this.pageAnalysisResult = result;
       }
     } catch (error) {
-      console.error('SafeInnocence: Text analysis error:', error);
+      console.error("SafeInnocence: Text analysis error:", error);
     }
   }
 
@@ -549,57 +789,93 @@ class ContentAnalyzer {
       const lowerResponse = response.toLowerCase();
       const categories = [];
 
-      if (lowerResponse.includes('cyberbullying') || lowerResponse.includes('bullying')) {
-        categories.push('cyberbullying');
+      if (
+        lowerResponse.includes("cyberbullying") ||
+        lowerResponse.includes("bullying")
+      ) {
+        categories.push("cyberbullying");
       }
-      if (lowerResponse.includes('hate speech') || lowerResponse.includes('discriminatory')) {
-        categories.push('hate_speech');
+      if (
+        lowerResponse.includes("hate speech") ||
+        lowerResponse.includes("discriminatory")
+      ) {
+        categories.push("hate_speech");
       }
-      if (lowerResponse.includes('threat')) {
-        categories.push('threats');
+      if (lowerResponse.includes("threat")) {
+        categories.push("threats");
       }
-      if (lowerResponse.includes('self-harm') || lowerResponse.includes('suicide')) {
-        categories.push('self_harm');
+      if (
+        lowerResponse.includes("self-harm") ||
+        lowerResponse.includes("suicide")
+      ) {
+        categories.push("self_harm");
       }
-      if (lowerResponse.includes('misinformation') || lowerResponse.includes('false')) {
-        categories.push('misinformation');
+      if (
+        lowerResponse.includes("misinformation") ||
+        lowerResponse.includes("false")
+      ) {
+        categories.push("misinformation");
       }
-      if (lowerResponse.includes('adult') || lowerResponse.includes('sexual') || lowerResponse.includes('explicit')) {
-        categories.push('adult_content');
+      if (
+        lowerResponse.includes("adult") ||
+        lowerResponse.includes("sexual") ||
+        lowerResponse.includes("explicit")
+      ) {
+        categories.push("adult_content");
       }
-      if (lowerResponse.includes('substance') || lowerResponse.includes('drugs') || lowerResponse.includes('alcohol')) {
-        categories.push('substance_abuse');
+      if (
+        lowerResponse.includes("substance") ||
+        lowerResponse.includes("drugs") ||
+        lowerResponse.includes("alcohol")
+      ) {
+        categories.push("substance_abuse");
       }
-      if (lowerResponse.includes('personal information') || lowerResponse.includes('pii')) {
-        categories.push('personal_information');
+      if (
+        lowerResponse.includes("personal information") ||
+        lowerResponse.includes("pii")
+      ) {
+        categories.push("personal_information");
       }
-      if (lowerResponse.includes('extremism') || lowerResponse.includes('radicalization')) {
-        categories.push('extremism');
+      if (
+        lowerResponse.includes("extremism") ||
+        lowerResponse.includes("radicalization")
+      ) {
+        categories.push("extremism");
       }
-      if (lowerResponse.includes('violence') || lowerResponse.includes('violent') || lowerResponse.includes('gore')) {
-        categories.push('violence');
+      if (
+        lowerResponse.includes("violence") ||
+        lowerResponse.includes("violent") ||
+        lowerResponse.includes("gore")
+      ) {
+        categories.push("violence");
       }
 
-      if (lowerResponse.includes('inappropriate') ||
-          lowerResponse.includes('not safe') ||
-          categories.length > 0) {
+      if (
+        lowerResponse.includes("inappropriate") ||
+        lowerResponse.includes("not safe") ||
+        categories.length > 0
+      ) {
         return {
           inappropriate: true,
-          reason: categories.length > 0 ? `Detected: ${categories.join(', ')}` : 'Content flagged by AI analysis',
-          severity: 'medium',
-          categories: categories
+          reason:
+            categories.length > 0
+              ? `Detected: ${categories.join(", ")}`
+              : "Content flagged by AI analysis",
+          severity: "medium",
+          categories: categories,
         };
       }
 
       return null;
     } catch (error) {
-      console.error('SafeInnocence: Response parsing error:', error);
+      console.error("SafeInnocence: Response parsing error:", error);
       return null;
     }
   }
 
   /**
    * Analyze social media content (comments, posts)
+   * @returns {Promise<boolean>} - True if page was blocked, false otherwise
    */
   async analyzeSocialMediaContent() {
     try {
@@ -609,8 +885,29 @@ class ContentAnalyzer {
       // Analyze comments based on platform
       await this.analyzeComments();
 
+      // Evaluate if threshold is exceeded - block page if needed
+      const blockThreshold = this.settings.blockThreshold ||
+        (this.settings.sensitivity === "high" ? 3 :
+         this.settings.sensitivity === "medium" ? 5 : 7);
+
+      console.log(`SafeInnocence: Blocked content count: ${this.blockedContentCount}, Threshold: ${blockThreshold}`);
+
+      if (this.blockedContentCount >= blockThreshold) {
+        // Block page temporarily but DON'T add to blocked sites list
+        console.log(`SafeInnocence: Threshold exceeded (${this.blockedContentCount}/${blockThreshold}), blocking page temporarily`);
+        this.blockPageTemporarily(`Too much inappropriate content detected: ${this.blockedContentCount} items`);
+        return true; // Page was blocked
+      } else if (this.blockedContentCount > 0) {
+        // Just save as partial block if some content was filtered
+        await this.saveBlockedSite(
+          "partial",
+          `${this.blockedContentCount} items filtered on ${this.socialMediaPlatform}`
+        );
+      }
+      return false; // Page was not blocked
     } catch (error) {
-      console.error('SafeInnocence: Social media analysis error:', error);
+      console.error("SafeInnocence: Social media analysis error:", error);
+      return false;
     }
   }
 
@@ -619,24 +916,33 @@ class ContentAnalyzer {
    */
   async analyzeSocialMediaImages() {
     try {
-      const images = Array.from(document.querySelectorAll('img'));
+      const images = Array.from(document.querySelectorAll("img"));
 
       // Filter and categorize images
       const thumbnails = [];
       const otherImages = [];
 
-      images.forEach(img => {
+      images.forEach((img) => {
         const area = img.naturalWidth * img.naturalHeight;
 
         // Check if it's a video thumbnail or post image based on selectors and size
-        const isYoutubeThumbnail = img.closest('ytd-thumbnail, #thumbnail, a#thumbnail, yt-thumbnail-view-model, yt-collection-thumbnail-view-model');
-        const isInstagramPost = img.closest('article');
+        const isYoutubeThumbnail = img.closest(
+          "ytd-thumbnail, #thumbnail, a#thumbnail, yt-thumbnail-view-model, yt-collection-thumbnail-view-model"
+        );
+        const isInstagramPost = img.closest("article");
         const isTikTokVideo = img.closest('[data-e2e="video-item"]');
         const isTwitterMedia = img.closest('[data-testid="tweet"] img');
         const isFacebookPost = img.closest('div[role="article"]');
 
-        if (isYoutubeThumbnail || isInstagramPost || isTikTokVideo || isTwitterMedia || isFacebookPost) {
-          if (area > 10000) { // Significant size
+        if (
+          isYoutubeThumbnail ||
+          isInstagramPost ||
+          isTikTokVideo ||
+          isTwitterMedia ||
+          isFacebookPost
+        ) {
+          if (area > 10000) {
+            // Significant size
             thumbnails.push(img);
           }
         } else if (area > 50000) {
@@ -649,7 +955,7 @@ class ContentAnalyzer {
 
       // Analyze thumbnails first (these are important on social media)
       for (const img of thumbnails) {
-        const result = await this.analyzeImage(img, 'thumbnail');
+        const result = await this.analyzeImage(img, "thumbnail");
         this.updateProgress();
 
         // Don't block social media pages, just blur the image
@@ -660,16 +966,15 @@ class ContentAnalyzer {
 
       // Analyze other large images
       for (const img of otherImages.slice(0, 20)) {
-        const result = await this.analyzeImage(img, 'large');
+        const result = await this.analyzeImage(img, "large");
         this.updateProgress();
 
         if (result && result.inappropriate) {
           this.blockedContentCount++;
         }
       }
-
     } catch (error) {
-      console.error('SafeInnocence: Social media image analysis error:', error);
+      console.error("SafeInnocence: Social media image analysis error:", error);
     }
   }
 
@@ -680,11 +985,11 @@ class ContentAnalyzer {
     const commentSelectors = this.getCommentSelectors();
 
     if (!commentSelectors) {
-      console.warn('SafeInnocence: No comment selectors for this platform');
+      console.warn("SafeInnocence: No comment selectors for this platform");
       return;
     }
 
-    const comments = document.querySelectorAll(commentSelectors.join(', '));
+    const comments = document.querySelectorAll(commentSelectors.join(", "));
     console.log(`SafeInnocence: Found ${comments.length} comments to analyze`);
 
     let analyzedCount = 0;
@@ -698,7 +1003,7 @@ class ContentAnalyzer {
 
       // Update progress
       if (this.progressIndicator) {
-        const status = document.getElementById('safe-innocence-status');
+        const status = document.getElementById("safe-innocence-status");
         if (status) {
           status.textContent = `Analyzing comments: ${analyzedCount}/${comments.length}`;
         }
@@ -711,38 +1016,28 @@ class ContentAnalyzer {
    */
   getCommentSelectors() {
     const selectors = {
-      'youtube': [
-        '#content-text',
-        'yt-formatted-string#content-text',
-        '#comment #content-text'
+      youtube: [
+        "#content-text",
+        "yt-formatted-string#content-text",
+        "#comment #content-text",
       ],
-      'instagram': [
-        'span._ap3a._aaco._aacu._aacx._aad7._aade',
+      instagram: [
+        "span._ap3a._aaco._aacu._aacx._aad7._aade",
         'span[dir="auto"]',
-        'div.C4VMK > span'
+        "div.C4VMK > span",
       ],
-      'twitter': [
-        'div[data-testid="tweetText"]',
-        'div[lang] > span'
-      ],
-      'facebook': [
-        'div[dir="auto"]',
-        'span[dir="auto"]',
-        'div.x1lliihq'
-      ],
-      'reddit': [
+      twitter: ['div[data-testid="tweetText"]', "div[lang] > span"],
+      facebook: ['div[dir="auto"]', 'span[dir="auto"]', "div.x1lliihq"],
+      reddit: [
         'div[data-testid="comment"]',
-        'div.md p',
-        'div._292iotee19Lmt0MUIr9ejT'
+        "div.md p",
+        "div._292iotee19Lmt0MUIr9ejT",
       ],
-      'discord': [
-        'div[class*="messageContent"]',
-        'div.markup'
-      ],
-      'tiktok': [
+      discord: ['div[class*="messageContent"]', "div.markup"],
+      tiktok: [
         'p[data-e2e="comment-level-1"]',
-        'span[data-e2e="comment-level-2"]'
-      ]
+        'span[data-e2e="comment-level-2"]',
+      ],
     };
 
     return selectors[this.socialMediaPlatform] || null;
@@ -758,7 +1053,7 @@ class ContentAnalyzer {
       const commentText = commentElement.innerText?.trim();
 
       if (!commentText || commentText.length < 10) {
-        commentElement.dataset.safeInnocenceAnalyzed = 'true';
+        commentElement.dataset.safeInnocenceAnalyzed = "true";
         return;
       }
 
@@ -767,19 +1062,26 @@ class ContentAnalyzer {
                      Comment: "${commentText}"
                      Respond only with JSON: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`;
 
+      console.log(
+        `SafeInnocence: Sending comment analysis prompt:`,
+        commentText.substring(0, 100)
+      );
+
       const response = await this.session.prompt(prompt, {
-        outputLanguage: 'en'
+        outputLanguage: "en",
       });
+
+      console.log(`SafeInnocence: AI Response for comment:`, response);
       const result = this.parseAIResponse(response);
 
       if (result && result.inappropriate) {
         this.replaceInappropriateComment(commentElement, result);
       }
 
-      commentElement.dataset.safeInnocenceAnalyzed = 'true';
+      commentElement.dataset.safeInnocenceAnalyzed = "true";
     } catch (error) {
-      console.error('SafeInnocence: Comment analysis error:', error);
-      commentElement.dataset.safeInnocenceAnalyzed = 'true';
+      console.error("SafeInnocence: Comment analysis error:", error);
+      commentElement.dataset.safeInnocenceAnalyzed = "true";
     }
   }
 
@@ -787,8 +1089,8 @@ class ContentAnalyzer {
    * Replace inappropriate comment with warning
    */
   replaceInappropriateComment(commentElement, analysisResult) {
-    const replacement = document.createElement('div');
-    replacement.className = 'safe-innocence-blocked-comment';
+    const replacement = document.createElement("div");
+    replacement.className = "safe-innocence-blocked-comment";
     replacement.style.cssText = `
       background: #fff3e0;
       border: 2px solid #ff9800;
@@ -798,22 +1100,25 @@ class ContentAnalyzer {
       font-family: Arial, sans-serif;
     `;
 
-    const icon = document.createElement('span');
-    icon.textContent = '🛡️ ';
-    icon.style.cssText = 'font-size: 16px;';
+    const icon = document.createElement("span");
+    icon.textContent = "🛡️ ";
+    icon.style.cssText = "font-size: 16px;";
 
-    const text = document.createElement('span');
-    text.style.cssText = 'color: #e65100; font-weight: 500; font-size: 14px;';
+    const text = document.createElement("span");
+    text.style.cssText = "color: #e65100; font-weight: 500; font-size: 14px;";
     text.textContent = `Content removed by SafeInnocence`;
 
-    const reason = document.createElement('div');
-    reason.style.cssText = 'color: #666; font-size: 12px; margin-top: 4px;';
+    const reason = document.createElement("div");
+    reason.style.cssText = "color: #666; font-size: 12px; margin-top: 4px;";
     reason.textContent = `Reason: ${analysisResult.reason}`;
 
-    const categories = document.createElement('div');
+    const categories = document.createElement("div");
     if (analysisResult.categories && analysisResult.categories.length > 0) {
-      categories.style.cssText = 'color: #999; font-size: 11px; margin-top: 4px;';
-      categories.textContent = `Categories: ${analysisResult.categories.join(', ')}`;
+      categories.style.cssText =
+        "color: #999; font-size: 11px; margin-top: 4px;";
+      categories.textContent = `Categories: ${analysisResult.categories.join(
+        ", "
+      )}`;
     }
 
     replacement.appendChild(icon);
@@ -825,39 +1130,67 @@ class ContentAnalyzer {
 
     // Replace the original comment
     if (commentElement.parentElement) {
-      commentElement.style.display = 'none';
+      commentElement.style.display = "none";
       commentElement.parentElement.insertBefore(replacement, commentElement);
     }
   }
 
   /**
    * Evaluate overall page safety
+   * @returns {boolean} - True if page was blocked, false otherwise
    */
   evaluatePageSafety() {
     // Don't block social media pages
     if (this.isSocialMedia) {
-      return;
+      return false;
     }
 
     // Threshold for blocking entire page
-    const blockThreshold = this.settings.sensitivity === 'high' ? 3 :
-                          this.settings.sensitivity === 'medium' ? 5 : 7;
+    const blockThreshold =
+      this.settings.sensitivity === "high"
+        ? 3
+        : this.settings.sensitivity === "medium"
+        ? 5
+        : 7;
 
     if (this.blockedContentCount >= blockThreshold) {
       this.blockPage();
+      return true; // Page was blocked
     }
+    return false; // Page was not blocked
   }
 
   /**
-   * Block the entire page
+   * Block page temporarily (without saving to blocked sites list)
    */
-  blockPage(reason = null) {
+  blockPageTemporarily(reason = null) {
     // Hide progress indicator
     this.hideProgressIndicator();
 
+    // Create blocking overlay (same as blockPage but without saving)
+    this.createBlockOverlay(reason);
+  }
+
+  /**
+   * Block the entire page (and save to blocked sites list)
+   */
+  async blockPage(reason = null) {
+    // Hide progress indicator
+    this.hideProgressIndicator();
+
+    // Save blocked site to storage
+    await this.saveBlockedSite("total", reason);
+
     // Create blocking overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'safe-innocence-page-block';
+    this.createBlockOverlay(reason);
+  }
+
+  /**
+   * Create block overlay UI
+   */
+  createBlockOverlay(reason = null) {
+    const overlay = document.createElement("div");
+    overlay.id = "safe-innocence-page-block";
     overlay.style.cssText = `
       position: fixed;
       top: 0;
@@ -871,7 +1204,7 @@ class ContentAnalyzer {
       justify-content: center;
     `;
 
-    const modal = document.createElement('div');
+    const modal = document.createElement("div");
     modal.style.cssText = `
       background: white;
       padding: 40px;
@@ -881,25 +1214,31 @@ class ContentAnalyzer {
       box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     `;
 
-    const icon = document.createElement('div');
-    icon.style.cssText = 'font-size: 64px; margin-bottom: 20px;';
-    icon.textContent = '🛡️';
+    const icon = document.createElement("div");
+    icon.style.cssText = "font-size: 64px; margin-bottom: 20px;";
+    icon.textContent = "🛡️";
 
-    const title = document.createElement('h2');
-    title.textContent = 'Page Blocked by SafeInnocence';
-    title.style.cssText = 'color: #d32f2f; margin-bottom: 20px; font-family: Arial, sans-serif;';
+    const title = document.createElement("h2");
+    title.textContent = "Page Blocked by SafeInnocence";
+    title.style.cssText =
+      "color: #d32f2f; margin-bottom: 20px; font-family: Arial, sans-serif;";
 
-    const message = document.createElement('p');
+    const message = document.createElement("p");
     message.textContent = `This page contains content that may not be appropriate for children. ${
-      reason || (this.pageAnalysisResult ? this.pageAnalysisResult.reason : 'Multiple inappropriate elements detected.')
+      reason ||
+      (this.pageAnalysisResult
+        ? this.pageAnalysisResult.reason
+        : "Multiple inappropriate elements detected.")
     }`;
-    message.style.cssText = 'color: #333; margin-bottom: 30px; line-height: 1.6; font-family: Arial, sans-serif;';
+    message.style.cssText =
+      "color: #333; margin-bottom: 30px; line-height: 1.6; font-family: Arial, sans-serif;";
 
-    const buttonContainer = document.createElement('div');
-    buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: center;';
+    const buttonContainer = document.createElement("div");
+    buttonContainer.style.cssText =
+      "display: flex; gap: 10px; justify-content: center;";
 
-    const goBackButton = document.createElement('button');
-    goBackButton.textContent = 'Go Back';
+    const goBackButton = document.createElement("button");
+    goBackButton.textContent = "Go Back";
     goBackButton.style.cssText = `
       padding: 12px 24px;
       background: #d32f2f;
@@ -913,8 +1252,8 @@ class ContentAnalyzer {
     `;
     goBackButton.onclick = () => window.history.back();
 
-    const closeButton = document.createElement('button');
-    closeButton.textContent = 'Close Page';
+    const closeButton = document.createElement("button");
+    closeButton.textContent = "Close Page";
     closeButton.style.cssText = `
       padding: 12px 24px;
       background: #666;
@@ -939,7 +1278,45 @@ class ContentAnalyzer {
     document.body.appendChild(overlay);
 
     // Prevent scrolling
-    document.body.style.overflow = 'hidden';
+    document.body.style.overflow = "hidden";
+  }
+
+  /**
+   * Save blocked site to storage
+   */
+  async saveBlockedSite(blockType, reason) {
+    try {
+      const currentUrl = window.location.href;
+      const result = await chrome.storage.local.get(["blockedSites"]);
+      const blockedSites = result.blockedSites || [];
+
+      // Check if site already exists
+      const existingIndex = blockedSites.findIndex((site) =>
+        currentUrl.includes(site.url)
+      );
+
+      const siteData = {
+        url: window.location.hostname + window.location.pathname,
+        blockType: blockType,
+        reason: reason || "Inappropriate content detected",
+        timestamp: Date.now(),
+      };
+
+      if (existingIndex >= 0) {
+        // Update existing entry
+        blockedSites[existingIndex] = {
+          ...blockedSites[existingIndex],
+          ...siteData,
+        };
+      } else {
+        // Add new entry
+        blockedSites.push(siteData);
+      }
+
+      await chrome.storage.local.set({ blockedSites });
+    } catch (error) {
+      console.error("SafeInnocence: Error saving blocked site:", error);
+    }
   }
 
   /**
@@ -949,20 +1326,23 @@ class ContentAnalyzer {
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) { // Element node
+          if (node.nodeType === 1) {
+            // Element node
             // Check for new images
-            if (node.tagName === 'IMG') {
+            if (node.tagName === "IMG") {
               this.analyzeImage(node);
             } else if (node.querySelectorAll) {
-              const images = node.querySelectorAll('img');
-              images.forEach(img => this.analyzeImage(img));
+              const images = node.querySelectorAll("img");
+              images.forEach((img) => this.analyzeImage(img));
 
               // Check for new comments on social media
               if (this.isSocialMedia) {
                 const commentSelectors = this.getCommentSelectors();
                 if (commentSelectors) {
-                  const comments = node.querySelectorAll(commentSelectors.join(', '));
-                  comments.forEach(comment => {
+                  const comments = node.querySelectorAll(
+                    commentSelectors.join(", ")
+                  );
+                  comments.forEach((comment) => {
                     if (!comment.dataset.safeInnocenceAnalyzed) {
                       this.analyzeComment(comment);
                     }
@@ -977,7 +1357,7 @@ class ContentAnalyzer {
 
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
     });
 
     // Setup scroll observer for lazy-loaded content
@@ -1007,7 +1387,7 @@ class ContentAnalyzer {
       }, 300);
     };
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener("scroll", handleScroll, { passive: true });
   }
 
   /**
@@ -1016,12 +1396,17 @@ class ContentAnalyzer {
   async analyzeNewContent() {
     try {
       // Find unanalyzed images
-      const unanalyzedImages = Array.from(document.querySelectorAll('img:not([data-safe-innocence-analyzed])'));
+      const unanalyzedImages = Array.from(
+        document.querySelectorAll("img:not([data-safe-innocence-analyzed])")
+      );
 
       if (unanalyzedImages.length > 0) {
-        console.log(`SafeInnocence: Analyzing ${unanalyzedImages.length} new images after scroll`);
+        console.log(
+          `SafeInnocence: Analyzing ${unanalyzedImages.length} new images after scroll`
+        );
 
-        for (const img of unanalyzedImages.slice(0, 10)) { // Limit to 10 at a time
+        for (const img of unanalyzedImages.slice(0, 10)) {
+          // Limit to 10 at a time
           await this.analyzeImage(img);
         }
       }
@@ -1031,20 +1416,27 @@ class ContentAnalyzer {
         const commentSelectors = this.getCommentSelectors();
         if (commentSelectors) {
           const unanalyzedComments = Array.from(
-            document.querySelectorAll(commentSelectors.map(sel => `${sel}:not([data-safe-innocence-analyzed])`).join(', '))
+            document.querySelectorAll(
+              commentSelectors
+                .map((sel) => `${sel}:not([data-safe-innocence-analyzed])`)
+                .join(", ")
+            )
           );
 
           if (unanalyzedComments.length > 0) {
-            console.log(`SafeInnocence: Analyzing ${unanalyzedComments.length} new comments after scroll`);
+            console.log(
+              `SafeInnocence: Analyzing ${unanalyzedComments.length} new comments after scroll`
+            );
 
-            for (const comment of unanalyzedComments.slice(0, 5)) { // Limit to 5 at a time
+            for (const comment of unanalyzedComments.slice(0, 5)) {
+              // Limit to 5 at a time
               await this.analyzeComment(comment);
             }
           }
         }
       }
     } catch (error) {
-      console.error('SafeInnocence: Error analyzing new content:', error);
+      console.error("SafeInnocence: Error analyzing new content:", error);
     }
   }
 
@@ -1052,63 +1444,113 @@ class ContentAnalyzer {
    * Show progress indicator
    */
   showProgressIndicator() {
-    this.progressIndicator = document.createElement('div');
-    this.progressIndicator.id = 'safe-innocence-progress';
+    console.log("SafeInnocence: Showing progress indicator");
+
+    this.progressIndicator = document.createElement("div");
+    this.progressIndicator.id = "safe-innocence-progress";
     this.progressIndicator.style.cssText = `
       position: fixed !important;
-      top: 20px !important;
-      right: 20px !important;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+      top: 15px !important;
+      right: 15px !important;
+      background: linear-gradient(135deg, #7c3aed 0%, #10b981 100%) !important;
       color: white !important;
-      padding: 15px 20px !important;
-      border-radius: 10px !important;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+      padding: 8px 12px !important;
+      border-radius: 8px !important;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4) !important;
       z-index: 2147483647 !important;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
-      min-width: 250px !important;
-      max-width: 300px !important;
+      min-width: 180px !important;
+      max-width: 220px !important;
       pointer-events: auto !important;
       animation: slideInRight 0.3s ease-out !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
     `;
 
-    const icon = document.createElement('div');
-    icon.style.cssText = 'font-size: 24px !important; margin-bottom: 8px !important; text-align: center !important; line-height: 1 !important;';
-    icon.textContent = '🛡️';
+    const contentWrapper = document.createElement("div");
+    contentWrapper.style.cssText =
+      "flex: 1 !important; min-width: 0 !important;";
 
-    const title = document.createElement('div');
-    title.style.cssText = 'font-weight: bold !important; font-size: 14px !important; margin-bottom: 8px !important; text-align: center !important; color: white !important;';
-    title.textContent = 'SafeInnocence';
+    const header = document.createElement("div");
+    header.style.cssText =
+      "display: flex !important; align-items: center !important; gap: 6px !important; margin-bottom: 4px !important;";
 
-    const status = document.createElement('div');
-    status.id = 'safe-innocence-status';
-    status.style.cssText = 'font-size: 12px !important; margin-bottom: 10px !important; text-align: center !important; opacity: 0.9 !important; color: white !important;';
-    status.textContent = 'Analyzing page content...';
+    const icon = document.createElement("span");
+    icon.style.cssText =
+      "font-size: 16px !important; line-height: 1 !important;";
+    icon.textContent = "🛡️";
 
-    const progressBarContainer = document.createElement('div');
+    const title = document.createElement("span");
+    title.style.cssText =
+      "font-weight: 600 !important; font-size: 11px !important; color: white !important;";
+    title.textContent = "SafeInnocence";
+
+    header.appendChild(icon);
+    header.appendChild(title);
+
+    const status = document.createElement("div");
+    status.id = "safe-innocence-status";
+    status.style.cssText =
+      "font-size: 10px !important; opacity: 0.9 !important; color: white !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;";
+    status.textContent = "Analyzing...";
+
+    const progressBarContainer = document.createElement("div");
     progressBarContainer.style.cssText = `
       width: 100% !important;
-      height: 6px !important;
+      height: 3px !important;
       background: rgba(255, 255, 255, 0.3) !important;
-      border-radius: 3px !important;
+      border-radius: 2px !important;
       overflow: hidden !important;
+      margin-top: 4px !important;
     `;
 
-    const progressBar = document.createElement('div');
-    progressBar.id = 'safe-innocence-progress-bar';
+    const progressBar = document.createElement("div");
+    progressBar.id = "safe-innocence-progress-bar";
     progressBar.style.cssText = `
       width: 0% !important;
       height: 100% !important;
       background: white !important;
-      border-radius: 3px !important;
+      border-radius: 2px !important;
       transition: width 0.3s ease !important;
     `;
 
     progressBarContainer.appendChild(progressBar);
 
-    this.progressIndicator.appendChild(icon);
-    this.progressIndicator.appendChild(title);
-    this.progressIndicator.appendChild(status);
-    this.progressIndicator.appendChild(progressBarContainer);
+    contentWrapper.appendChild(header);
+    contentWrapper.appendChild(status);
+    contentWrapper.appendChild(progressBarContainer);
+
+    const closeButton = document.createElement("button");
+    closeButton.style.cssText = `
+      background: rgba(255, 255, 255, 0.2) !important;
+      border: none !important;
+      color: white !important;
+      width: 20px !important;
+      height: 20px !important;
+      border-radius: 4px !important;
+      cursor: pointer !important;
+      font-size: 14px !important;
+      line-height: 1 !important;
+      padding: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      flex-shrink: 0 !important;
+      transition: background 0.2s !important;
+    `;
+    closeButton.textContent = "×";
+    closeButton.title = "Close (analysis continues)";
+    closeButton.onclick = () => this.hideProgressIndicator();
+    closeButton.onmouseenter = () => {
+      closeButton.style.background = "rgba(255, 255, 255, 0.3) !important";
+    };
+    closeButton.onmouseleave = () => {
+      closeButton.style.background = "rgba(255, 255, 255, 0.2) !important";
+    };
+
+    this.progressIndicator.appendChild(contentWrapper);
+    this.progressIndicator.appendChild(closeButton);
 
     document.body.appendChild(this.progressIndicator);
   }
@@ -1120,12 +1562,16 @@ class ContentAnalyzer {
     this.analyzedImages++;
 
     if (this.progressIndicator) {
-      const progressBar = document.getElementById('safe-innocence-progress-bar');
-      const status = document.getElementById('safe-innocence-status');
+      const progressBar = document.getElementById(
+        "safe-innocence-progress-bar"
+      );
+      const status = document.getElementById("safe-innocence-status");
 
       if (progressBar && this.totalImages > 0) {
-        const percentage = Math.round((this.analyzedImages / this.totalImages) * 100);
-        progressBar.style.width = percentage + '%';
+        const percentage = Math.round(
+          (this.analyzedImages / this.totalImages) * 100
+        );
+        progressBar.style.width = percentage + "%";
         status.textContent = `Analyzing images: ${this.analyzedImages}/${this.totalImages}`;
       }
     }
@@ -1136,7 +1582,7 @@ class ContentAnalyzer {
    */
   hideProgressIndicator() {
     if (this.progressIndicator) {
-      this.progressIndicator.style.animation = 'slideOutRight 0.3s ease-out';
+      this.progressIndicator.style.animation = "slideOutRight 0.3s ease-out";
       setTimeout(() => {
         if (this.progressIndicator && this.progressIndicator.parentNode) {
           this.progressIndicator.parentNode.removeChild(this.progressIndicator);
