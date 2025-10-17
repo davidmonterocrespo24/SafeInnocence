@@ -81,25 +81,32 @@ class ContentAnalyzer {
         return;
       }
 
-      // Check if this page is already blocked
-      const currentUrl = window.location.href;
-      const blockedSites = stored.blockedSites || [];
-      const blockedSite = blockedSites.find(
-        (site) =>
-          currentUrl.includes(site.url) &&
-          site.blockType === "total" &&
-          !site.unblocked
-      );
+      // Detect social media platforms FIRST (before checking blocked sites)
+      this.detectSocialMedia();
 
-      if (blockedSite) {
-        console.log(
-          "SafeInnocence: Page already blocked, showing block screen"
+      // Check if this page is already blocked (SKIP for social media/search engines)
+      if (!this.isSearchEngineOrSocialMedia()) {
+        const currentUrl = window.location.href;
+        const blockedSites = stored.blockedSites || [];
+        const blockedSite = blockedSites.find(
+          (site) =>
+            currentUrl.includes(site.url) &&
+            site.blockType === "total" &&
+            !site.unblocked
         );
-        // Show block page immediately
-        this.blockPage(
-          blockedSite.reason || "This page was previously blocked"
-        );
-        return;
+
+        if (blockedSite) {
+          console.log(
+            "SafeInnocence: Page already blocked, showing block screen"
+          );
+          // Show block page immediately
+          this.blockPage(
+            blockedSite.reason || "This page was previously blocked"
+          );
+          return;
+        }
+      } else {
+        console.log("SafeInnocence: Social media/search engine detected - will analyze fresh on each visit");
       }
 
       // Check if AI APIs are available
@@ -107,9 +114,6 @@ class ContentAnalyzer {
         console.warn("SafeInnocence: AI APIs not available");
         return;
       }
-
-      // Detect social media platforms
-      this.detectSocialMedia();
 
       // Initialize AI models
       console.log("SafeInnocence: Initializing AI models...");
@@ -200,6 +204,14 @@ class ContentAnalyzer {
 
     // Listen to popstate (browser back/forward)
     window.addEventListener("popstate", checkUrlChange);
+  }
+
+  /**
+   * Check if current page is a search engine or social media platform
+   * @returns {boolean} - True if it's a social media or search engine
+   */
+  isSearchEngineOrSocialMedia() {
+    return this.isSocialMedia || this.socialMediaPlatform !== null;
   }
 
   /**
@@ -324,25 +336,7 @@ class ContentAnalyzer {
     if (!this.session) return false;
     console.log("SafeInnocence: Starting optimized image analysis");
 
-    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
-
-    const images = Array.from(document.querySelectorAll("img")).filter(img => {
-      // 1. Omitir imágenes sin 'src' o que ya fueron analizadas
-      if (!img.src || img.dataset.safeInnocenceAnalyzed) {
-        return false;
-      }
-      
-      try {
-        // 2. Usar la API URL para obtener solo la ruta del archivo, ignorando parámetros
-        const pathname = new URL(img.src, window.location.href).pathname.toLowerCase();
-        
-        // 3. Comprobar si la ruta termina con una de las extensiones permitidas
-        return allowedExtensions.some(ext => pathname.endsWith(ext));
-      } catch (e) {
-        // Si la URL es inválida, la ignoramos
-        return false;
-      }
-    });
+    const images = Array.from(document.querySelectorAll("img:not([src$='.svg'])"));
     const visible = [];
     const offscreen = [];
 
@@ -524,9 +518,10 @@ class ContentAnalyzer {
         }
       );
 
-      console.log(`SafeInnocence: AI Response for ${size} image:`, response);
+     
 
       const result = this.parseAIResponse(response);
+      console.log(`SafeInnocence: AI Response for ${size} image:`, response);
 
       if (result && result.inappropriate) {
         this.blockedContentCount++;
@@ -1095,13 +1090,8 @@ class ContentAnalyzer {
           `Too much inappropriate content detected: ${this.blockedContentCount} items`
         );
         return true; // Page was blocked
-      } else if (this.blockedContentCount > 0) {
-        // Just save as partial block if some content was filtered
-        await this.saveBlockedSite(
-          "partial",
-          `${this.blockedContentCount} items filtered on ${this.socialMediaPlatform}`
-        );
       }
+      // Social media/search engines are NEVER saved to blocked sites list
       return false; // Page was not blocked
     } catch (error) {
       console.error("SafeInnocence: Social media analysis error:", error);
@@ -1115,7 +1105,7 @@ class ContentAnalyzer {
   async analyzeSocialMediaImages() {
     try {
       console.log("SafeInnocence: Starting social media image analysis");
-      const images = Array.from(document.querySelectorAll("img:not([src$='.svg'])"))
+      const images = Array.from(document.querySelectorAll("img:not([src$='.svg'])"));
       console.log(`SafeInnocence: Found ${images.length} total images on page`);
 
       // Filter and categorize images
@@ -1382,8 +1372,12 @@ class ContentAnalyzer {
     // Hide progress indicator
     this.hideProgressIndicator();
 
-    // Save blocked site to storage
-    await this.saveBlockedSite("total", reason);
+    // NEVER save social media or search engines to blocked sites list
+    if (!this.isSearchEngineOrSocialMedia()) {
+      await this.saveBlockedSite("total", reason);
+    } else {
+      console.log("SafeInnocence: Social media/search engine blocked temporarily (not saved to list)");
+    }
 
     // Create blocking overlay
     this.createBlockOverlay(reason);
