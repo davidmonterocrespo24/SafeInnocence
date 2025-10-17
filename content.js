@@ -129,7 +129,7 @@ class ContentAnalyzer {
       (hostname.includes("google.com") || hostname.includes("google.")) &&
       url.includes("/search")
     ) {
-      this.isSocialMedia = true;
+      this.isSocialMedia = false;
       this.socialMediaPlatform = "google_search";
       console.log(
         "SafeInnocence: Detected Google Search - Using content filtering mode"
@@ -235,17 +235,14 @@ class ContentAnalyzer {
     }
   }
 
-  // Nuevo analyzeImages (optimizado)
   async analyzeImages() {
-    if (!this.session) return;
+    if (!this.session) return false;
     console.log("SafeInnocence: Starting optimized image analysis");
 
     const images = Array.from(document.querySelectorAll("img"));
-    // Priorizar visibles con IntersectionObserver
     const visible = [];
     const offscreen = [];
 
-    // tiny helper using synchronous bounding box (fast)
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     function isLikelyVisible(img) {
@@ -264,42 +261,58 @@ class ContentAnalyzer {
       else offscreen.push(img);
     }
 
-    // limita cantidad total para no sobrecargar
-    const toAnalyze = visible.concat(offscreen.slice(0, 40)); // visible first, then up to 40 offscreen
+    const toAnalyze = visible.concat(offscreen.slice(0, 40));
     this.totalImages = toAnalyze.length;
     this.analyzedImages = 0;
+    this._pageBlocked = false; // bandera para detener procesamiento si bloqueamos la página
 
-    // handler por imagen: usa cache y concurrency
     const handler = async (img) => {
-      // chequeo cache (puedes ampliar a IndexedDB)
+      if (this._pageBlocked) return null; // ya bloqueada por otra tarea
+
+      // cacheKey robusto
       const cacheKey =
-        img.src || img.dataset.src || "" || img.currentSrc || null;
+        (img.src && img.src.trim()) ||
+        (img.dataset && img.dataset.src && img.dataset.src.trim()) ||
+        (img.currentSrc && img.currentSrc.trim()) ||
+        null;
+
       if (cacheKey && this.imageCache.has(cacheKey)) {
         const cached = this.imageCache.get(cacheKey);
         // expiración simple: 24h
         if (Date.now() - cached.ts < 24 * 60 * 60 * 1000) {
-          this.analyzedImages++;
-          this.updateProgress();
-          if (cached.result?.inappropriate) {
-            this.blurOrRemoveImage(img, cached.result);
-          }
+          // marcar analizada
           img.dataset.safeInnocenceAnalyzed = "true";
+
+          // si la caché indica inapropiada -> incrementar contador y tomar acción
+          if (cached.result?.inappropriate) {
+            this.blockedContentCount++;
+            this.blurOrRemoveImage(img, cached.result);
+
+            // comprobar umbral inmediatamente
+            if (this.evaluatePageSafety()) {
+              this._pageBlocked = true;
+              // actualizar progreso antes de salir
+              this.updateProgress();
+              return cached.result;
+            }
+          }
+
+          // actualizar progreso (solo una vez NORMAL)
+          this.updateProgress();
           return cached.result;
         } else {
           this.imageCache.delete(cacheKey);
         }
       }
 
-      // obtener blob/bitmap con timeout/abort
+      // obtener datos de la imagen
       const imageBlobOrBitmap = await this.getImageData(img).catch(() => null);
       if (!imageBlobOrBitmap) {
         img.dataset.safeInnocenceAnalyzed = "true";
-        this.analyzedImages++;
         this.updateProgress();
         return null;
       }
 
-      // Llamada AI con timeout
       let result = null;
       try {
         result = await this.callAIWithTimeout(imageBlobOrBitmap, {
@@ -312,17 +325,38 @@ class ContentAnalyzer {
       }
 
       img.dataset.safeInnocenceAnalyzed = "true";
-      this.analyzedImages++;
-      this.updateProgress();
 
       if (cacheKey) this.imageCache.set(cacheKey, { result, ts: Date.now() });
-      if (result?.inappropriate) this.blurOrRemoveImage(img, result);
+
+      if (result?.inappropriate) {
+        // **aquí** incrementamos siempre que la IA diga inapropiado
+        this.blockedContentCount++;
+        this.blurOrRemoveImage(img, result);
+
+        // comprobar umbral inmediatamente
+        if (this.evaluatePageSafety()) {
+          this._pageBlocked = true;
+          // actualizar progreso antes de salir
+          this.updateProgress();
+          return result;
+        }
+      }
+
+      // un solo updateProgress por imagen analizada
+      this.updateProgress();
       return result;
     };
 
     // Ejecutar con límite de concurrencia
-    await this.limitConcurrency(toAnalyze, handler, this.analysisConcurrency);
+    try {
+      await this.limitConcurrency(toAnalyze, handler, this.analysisConcurrency);
+    } catch (err) {
+      // si alguna tarea lanzó por alguna razón, lo registramos pero seguimos
+      console.warn("SafeInnocence: analyzeImages concurrency aborted:", err);
+    }
+
     console.log("SafeInnocence: Optimized image analysis finished");
+    return !!this._pageBlocked; // true si bloqueamos la página
   }
 
   /**
@@ -886,16 +920,26 @@ class ContentAnalyzer {
       await this.analyzeComments();
 
       // Evaluate if threshold is exceeded - block page if needed
-      const blockThreshold = this.settings.blockThreshold ||
-        (this.settings.sensitivity === "high" ? 3 :
-         this.settings.sensitivity === "medium" ? 5 : 7);
+      const blockThreshold =
+        this.settings.blockThreshold ||
+        (this.settings.sensitivity === "high"
+          ? 3
+          : this.settings.sensitivity === "medium"
+          ? 5
+          : 7);
 
-      console.log(`SafeInnocence: Blocked content count: ${this.blockedContentCount}, Threshold: ${blockThreshold}`);
+      console.log(
+        `SafeInnocence: Blocked content count: ${this.blockedContentCount}, Threshold: ${blockThreshold}`
+      );
 
       if (this.blockedContentCount >= blockThreshold) {
         // Block page temporarily but DON'T add to blocked sites list
-        console.log(`SafeInnocence: Threshold exceeded (${this.blockedContentCount}/${blockThreshold}), blocking page temporarily`);
-        this.blockPageTemporarily(`Too much inappropriate content detected: ${this.blockedContentCount} items`);
+        console.log(
+          `SafeInnocence: Threshold exceeded (${this.blockedContentCount}/${blockThreshold}), blocking page temporarily`
+        );
+        this.blockPageTemporarily(
+          `Too much inappropriate content detected: ${this.blockedContentCount} items`
+        );
         return true; // Page was blocked
       } else if (this.blockedContentCount > 0) {
         // Just save as partial block if some content was filtered
