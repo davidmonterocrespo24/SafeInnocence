@@ -536,52 +536,12 @@ SafeInnocence is designed with **privacy-first principles**:
 - `tabs`: Manage extension across tabs
 - `<all_urls>`: Analyze content on any website
 
-## Support
-
-### Getting Help
-
-For issues, questions, or suggestions:
-
-1. **Check Documentation**: Review this README thoroughly
-2. **Troubleshooting**: See troubleshooting section above
-3. **Chrome AI Docs**: Review [Chrome's AI documentation](https://developer.chrome.com/docs/ai/built-in)
-4. **System Requirements**: Verify your system meets requirements
-5. **GitHub Issues**: Open an issue on the repository
-
-### Useful Resources
-
-- [Chrome Built-in AI Documentation](https://developer.chrome.com/docs/ai/built-in)
-- [Prompt API Guide](https://developer.chrome.com/docs/ai/built-in-apis)
-- [Chrome Extensions Documentation](https://developer.chrome.com/docs/extensions/mv3/)
-- [Gemini Nano Overview](https://deepmind.google/technologies/gemini/nano/)
-
-## Acknowledgments
-
-Built with cutting-edge web technologies:
-
-### Technologies
-- **Chrome Prompt API** (LanguageModel) - Gemini Nano for content analysis
-- **Chrome Summarizer API** - Text summarization
-- **Chrome Extensions Manifest V3** - Modern extension architecture
-- **Chrome Storage API** - Local data persistence
-- **MutationObserver API** - Dynamic content monitoring
-- **Intersection Observer** - Lazy-loading detection
-- **Web Crypto API** - SHA-256 password hashing
-- **Canvas API** - Image processing
-- **createImageBitmap** - Efficient image handling
-- **AbortController** - Timeout management
 
 ### Inspiration
 - Child safety advocacy groups
 - Browser safety research
 - Chrome's AI-first future vision
 - Open-source community
-
-### Special Thanks
-- Chrome team for built-in AI APIs
-- Google DeepMind for Gemini Nano
-- Open-source contributors
-- Beta testers and early adopters
 
 ## Version History
 
