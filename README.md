@@ -5,6 +5,26 @@ A Chrome extension that protects children from violent and sexual content using 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Chrome](https://img.shields.io/badge/Chrome-138%2B-blue.svg)](https://www.google.com/chrome/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-orange.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
+[![Built-in AI](https://img.shields.io/badge/Built--in%20AI-Gemini%20Nano-purple.svg)](https://developer.chrome.com/docs/ai/built-in)
+
+---
+
+## 🏆 Google Chrome Built-in AI Challenge 2025
+
+**This project is a submission for the [Google Chrome Built-in AI Challenge 2025](https://googlechromeai.devpost.com/)**
+
+**Challenge Theme**: *Innovate with Intelligence: Build the Future of the Web with Gemini Nano and Chrome AI*
+
+SafeInnocence demonstrates the power of Chrome's on-device AI capabilities by creating a practical solution for child safety online. By leveraging **Gemini Nano** through the **Prompt API** and **Summarizer API**, this extension provides real-time content filtering without compromising privacy - all processing happens locally on the user's device.
+
+### Why This Project Matters
+- 🛡️ **Real-world Impact**: Protects children from harmful online content
+- 🔒 **Privacy-First**: Zero data leaves the device - 100% local AI processing
+- ⚡ **Performance**: Optimized concurrent AI analysis with caching
+- 🌐 **Universal**: Works across all websites including social media platforms
+- 🎨 **Modern UX**: Beautiful dark/light theme with intuitive controls
+
+---
 
 ## Overview
 
@@ -403,202 +423,6 @@ SafeInnocence/
 └── README.md            # This file
 ```
 
-### Key Components
-
-#### content.js - ContentAnalyzer Class
-
-**Main Methods**:
-- `init()` - Initialize AI models, load settings, start analysis
-- `analyzePage()` - Main entry point, routes to social media or regular analysis
-- `analyzeImages()` - Optimized batch image analysis with concurrency control
-- `analyzeImage(img)` - Single image analysis with AI
-- `analyzeTextContent()` - Text analysis with summarization
-- `analyzeSocialMediaContent()` - Special mode for social platforms
-- `analyzeSocialMediaImages()` - Platform-specific image selectors
-- `analyzeComments()` - Comment filtering (platform-aware)
-- `evaluatePageSafety()` - Threshold checking and blocking decision
-- `blockPage(reason)` - Create block overlay + save to list
-- `blockPageTemporarily(reason)` - Create block overlay only (no save)
-- `blurOrRemoveImage(img, result)` - Apply blur + overlay + disable if YouTube
-- `setupMutationObserver()` - Watch for dynamic content
-- `setupScrollObserver()` - Throttled scroll analysis
-- `showProgressIndicator()` - Display analysis progress
-- `limitConcurrency(items, handler, limit)` - Parallel processing with limits
-
-**Optimizations**:
-- Image cache (Map with 24h TTL)
-- Concurrency control (2-6 parallel AI calls)
-- Timeout handling (15s per AI call with AbortController)
-- Fast prefiltering (keyword/size checks)
-- Viewport prioritization (visible images first)
-- Cross-origin image handling (fetch with timeout)
-- createImageBitmap for better performance
-
-#### background.js - Service Worker
-
-**Responsibilities**:
-- Extension installation/update handling
-- Statistics tracking (storage management)
-- Notification system
-- Settings persistence
-- Badge updates
-
-#### options.js - Settings Management
-
-**Features**:
-- Load/save settings to Chrome Storage
-- Theme toggle (dark ↔ light mode)
-- Password hashing (SHA-256)
-- Blocked sites display
-- Password verification for unblock/remove
-- AI status checking
-
-### Building & Testing
-
-1. **Make Changes**
-   - Edit source files in your preferred editor
-   - Follow existing code style and patterns
-
-2. **Reload Extension**
-   - Go to `chrome://extensions/`
-   - Click reload icon (⟳) for SafeInnocence
-   - Check for errors in service worker logs
-
-3. **Test Thoroughly**
-   - Visit various websites
-   - Test social media platforms
-   - Verify image blocking
-   - Check text analysis
-   - Test threshold blocking
-   - Verify settings persistence
-
-4. **Debug**
-   - Open DevTools on any page (F12)
-   - Check Console for "SafeInnocence:" logs
-   - Inspect Network tab for image fetches
-   - Monitor `chrome://on-device-internals` for AI status
-
-### Debugging Tips
-
-**Enable Verbose Logging**:
-The extension already includes extensive console.log statements:
-- `SafeInnocence: Initializing...`
-- `SafeInnocence: Analyzing X images...`
-- `SafeInnocence: AI Response: {...}`
-- `SafeInnocence: Blocked content count: X`
-
-**Check AI Model Status**:
-1. Visit `chrome://on-device-internals`
-2. View Gemini Nano download progress
-3. Check available disk space
-4. Verify model version
-
-**Common Console Commands**:
-```javascript
-// Check extension settings
-chrome.storage.local.get(['settings'], console.log)
-
-// Check blocked sites
-chrome.storage.local.get(['blockedSites'], console.log)
-
-// Clear all data
-chrome.storage.local.clear()
-```
-
-## Troubleshooting
-
-### AI Models Not Available
-
-**Symptoms**:
-- "AI models unavailable" in settings
-- Extension not analyzing content
-
-**Solutions**:
-1. ✅ Verify Chrome version ≥ 138
-2. ✅ Check free disk space ≥ 22GB
-3. ✅ Confirm supported OS
-4. ✅ Verify hardware requirements (GPU/RAM)
-5. ✅ Visit `chrome://on-device-internals` to trigger download
-6. ✅ Wait for model download to complete (~2-4GB)
-
-### Extension Not Working
-
-**Symptoms**:
-- Pages not being analyzed
-- No progress indicator appears
-- Content not being blocked
-
-**Solutions**:
-1. ✅ Check extension enabled (popup toggle)
-2. ✅ Verify AI models downloaded
-3. ✅ Reload page (Ctrl+R / Cmd+R)
-4. ✅ Check Console for errors (F12)
-5. ✅ Reload extension at `chrome://extensions/`
-6. ✅ Check settings sensitivity ≠ disabled
-
-### Pages Loading Slowly
-
-**Symptoms**:
-- Websites take longer to load
-- Slow scrolling performance
-
-**Solutions**:
-1. ✅ Reduce sensitivity to "Low" or "Medium"
-2. ✅ Increase block threshold (reduce analysis frequency)
-3. ✅ Disable text analysis (only analyze images)
-4. ✅ Reduce analysis concurrency in code (default: 2)
-5. ✅ Clear image cache periodically
-
-### False Positives
-
-**Symptoms**:
-- Safe content being blocked
-- Educational content flagged incorrectly
-- Art/medical images blocked
-
-**Solutions**:
-1. ✅ Lower sensitivity to "Medium" or "Low"
-2. ✅ Increase block threshold (require more violations)
-3. ✅ Disable text analysis if only image protection needed
-4. ✅ Temporarily unblock specific sites (Settings → Blocked Sites)
-5. ✅ Report issues to improve AI model
-
-### Progress Indicator Not Showing
-
-**Symptoms**:
-- No visual feedback during analysis
-
-**Solutions**:
-1. ✅ Check Console for "Showing progress indicator" log
-2. ✅ Verify no CSS conflicts with page styles
-3. ✅ Ensure z-index not overridden (default: 2147483647)
-4. ✅ Check if already closed (click extension icon to restart)
-
-### Block Modal Not Appearing
-
-**Symptoms**:
-- Content blocked but page not blocked
-- Threshold exceeded but no modal
-
-**Solutions**:
-1. ✅ Check blocked content count in Console logs
-2. ✅ Verify threshold setting (default: 3)
-3. ✅ Ensure on regular website (not social media)
-4. ✅ Check if site already in blocked list
-5. ✅ Reload page to re-trigger analysis
-
-## Limitations
-
-Current limitations to be aware of:
-
-- **AI Accuracy**: May occasionally misclassify content (~5-10% error rate)
-- **Performance**: Initial analysis adds 1-3 second delay on image-heavy pages
-- **Languages**: Best with English content; other languages may have lower accuracy
-- **Dynamic Content**: Some AJAX content may load before analysis completes
-- **Mobile**: Not available on Android/iOS Chrome (desktop only)
-- **Video Content**: Only analyzes thumbnails, not video content itself
-- **Encrypted Content**: Cannot analyze content loaded via secure/encrypted channels
-- **Performance on Low-end Hardware**: May be slow on devices below minimum specs
 
 ## Future Improvements
 
