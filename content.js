@@ -56,6 +56,7 @@ class ContentAnalyzer {
       },
       "required": ["inappropriate", "reason", "severity", "categories"]
     };
+    this.processingQueue = new Set();
   }
 
   /**
@@ -148,6 +149,38 @@ class ContentAnalyzer {
       }
     } catch (error) {
       console.error("SafeInnocence initialization error:", error);
+    }
+  }
+
+  /**
+   * Enqueues an image for analysis if it's not already processed or processing.
+   * @param {HTMLElement} img - The image element to analyze.
+   */
+  async enqueueImageForAnalysis(img) {
+    // Usamos la URL como clave única para la cola y el caché.
+    const cacheKey = img.src || img.dataset.src;
+
+    // 1. Si no hay URL, o ya fue analizada, o ya está en la cola, la ignoramos.
+    if (!cacheKey || img.dataset.safeInnocenceAnalyzed || this.processingQueue.has(cacheKey)) {
+      return;
+    }
+
+    try {
+      // 2. Añadir la imagen a la cola de procesamiento para evitar duplicados.
+      this.processingQueue.add(cacheKey);
+      console.log(`SafeInnocence: [Queue] Added ${cacheKey.substring(0, 50)}...`);
+
+      // 3. Llamar a la función de análisis original.
+      await this.analyzeImage(img);
+
+    } catch (error) {
+      console.error(`SafeInnocence: Error enqueuing or analyzing image ${cacheKey}:`, error);
+      // Aunque haya un error, la marcamos como analizada para no reintentar infinitamente.
+      img.dataset.safeInnocenceAnalyzed = 'true';
+    } finally {
+      // 4. MUY IMPORTANTE: Quitar la imagen de la cola, tanto si el análisis tuvo éxito como si falló.
+      this.processingQueue.delete(cacheKey);
+      console.log(`SafeInnocence: [Queue] Removed ${cacheKey.substring(0, 50)}...`);
     }
   }
 
@@ -757,7 +790,7 @@ class ContentAnalyzer {
                      - Personal Information: Exposed personally identifiable information
                      - Extremism: Violent extremist content or radicalization materials
                      - Violence: Violent, graphic, or disturbing imagery
-
+                     - Men or women in underwear
                      Be extremely cautious and err on the side of protection.
                      Respond with JSON format: {"inappropriate": boolean, "reason": string, "severity": "low"|"medium"|"high", "categories": []}`,
         expectedInputs: [
@@ -1528,10 +1561,10 @@ class ContentAnalyzer {
             // Element node
             // Check for new images
             if (node.tagName === "IMG") {
-              this.analyzeImage(node);
+              this.enqueueImageForAnalysis(node);
             } else if (node.querySelectorAll) {
               const images = node.querySelectorAll("img");
-              images.forEach((img) => this.analyzeImage(img));
+              images.forEach((img) => this.enqueueImageForAnalysis(img)); 
 
               // Check for new comments on social media
               if (this.isSocialMedia) {
