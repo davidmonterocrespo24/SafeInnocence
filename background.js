@@ -30,6 +30,18 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
+/**
+ * Convert a Blob to a data URL
+ */
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 // Handle messages from content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'contentBlocked') {
@@ -38,6 +50,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     handlePageBlocked(request.data, sender.tab);
   } else if (request.action === 'getSettings') {
     getSettings().then(sendResponse);
+    return true; // Keep channel open for async response
+  } else if (request.type === 'fetchImageAsDataURL') {
+    // Handle cross-origin image fetching
+    fetch(request.url)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Network response was not ok: ${response.statusText}`);
+        }
+        return response.blob();
+      })
+      .then(blob => blobToDataURL(blob))
+      .then(dataUrl => {
+        sendResponse({ success: true, dataUrl: dataUrl });
+      })
+      .catch(error => {
+        console.error('SafeInnocence: Background fetch failed:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+
     return true; // Keep channel open for async response
   }
 });

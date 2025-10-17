@@ -324,7 +324,25 @@ class ContentAnalyzer {
     if (!this.session) return false;
     console.log("SafeInnocence: Starting optimized image analysis");
 
-    const images = Array.from(document.querySelectorAll("img"));
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
+
+    const images = Array.from(document.querySelectorAll("img")).filter(img => {
+      // 1. Omitir imágenes sin 'src' o que ya fueron analizadas
+      if (!img.src || img.dataset.safeInnocenceAnalyzed) {
+        return false;
+      }
+      
+      try {
+        // 2. Usar la API URL para obtener solo la ruta del archivo, ignorando parámetros
+        const pathname = new URL(img.src, window.location.href).pathname.toLowerCase();
+        
+        // 3. Comprobar si la ruta termina con una de las extensiones permitidas
+        return allowedExtensions.some(ext => pathname.endsWith(ext));
+      } catch (e) {
+        // Si la URL es inválida, la ignoramos
+        return false;
+      }
+    });
     const visible = [];
     const offscreen = [];
 
@@ -528,106 +546,81 @@ class ContentAnalyzer {
     }
   }
 
-  // Mejor getImageData usando createImageBitmap / OffscreenCanvas y reuso
+  /**
+   * Get image data with CORS handling via background script
+   */
   async getImageData(imgElement) {
     try {
-      // Si la imagen está cross-origin y no se puede fetch -> fall back
+      const imageUrl = imgElement.src;
+      if (!imageUrl) return null;
+
+      let blob;
       const isCross = this.isCrossOriginImage(imgElement);
-      // Intentar usar createImageBitmap con fetch(blob) (mejor performance)
-      let blob = null;
-      if (isCross) {
-        // intenta fetch con timeout y AbortController
+
+      // If the image is NOT cross-origin, try the fast method
+      if (!isCross) {
         try {
-          const ac = new AbortController();
-          const id = setTimeout(() => ac.abort(), 4000);
-          const resp = await fetch(imgElement.src, {
-            signal: ac.signal,
-            cache: "force-cache",
-          });
-          clearTimeout(id);
-          if (!resp.ok) throw new Error("fetch failed");
-          blob = await resp.blob();
-        } catch (e) {
-          // fall back: si no obtenemos blob, intentar captura via background (ext API) o devolver null
-          return null;
-        }
-      } else {
-        // same-origin: podemos crear bitmap directo desde <img> con createImageBitmap(img)
-        try {
-          if ("createImageBitmap" in window) {
-            const bmp = await createImageBitmap(imgElement);
-            return bmp; // createImageBitmap es aceptado por OffscreenCanvas o transferrable
+          const response = await fetch(imageUrl, { cache: "force-cache" });
+          if (response.ok) {
+            blob = await response.blob();
           }
         } catch (e) {
-          // ignore y continuar
+          // If fetch fails, we'll try the background script
         }
-        // fallback: fetch blob
+      }
+
+      // If we don't have a blob (because it's cross-origin or fetch failed), use the background script
+      if (!blob) {
+        console.log(`SafeInnocence: Image is cross-origin or fetch failed. Using background script for: ${imageUrl}`);
+
         try {
-          const resp = await fetch(imgElement.src, { cache: "force-cache" });
-          if (!resp.ok) throw new Error("fetch failed");
-          blob = await resp.blob();
-        } catch (e) {
-          // fallback to drawing from element into canvas
-          // we'll handle below
-        }
-      }
-
-      // Si tenemos blob -> createImageBitmap(blob)
-      if (blob) {
-        if ("createImageBitmap" in window) {
-          const bmp = await createImageBitmap(blob);
-          return bmp;
-        } else {
-          // fallback: convert blob -> img -> draw to canvas
-          const objectUrl = URL.createObjectURL(blob);
-          const temp = new Image();
-          temp.src = objectUrl;
-          await new Promise((res, rej) => {
-            temp.onload = res;
-            temp.onerror = rej;
-            setTimeout(res, 3000);
+          const response = await chrome.runtime.sendMessage({
+            type: 'fetchImageAsDataURL',
+            url: imageUrl
           });
-          // draw to regular canvas
-          const canvas = document.createElement("canvas");
-          const maxDim = 512;
-          const w = Math.min(maxDim, temp.naturalWidth || temp.width);
-          const h = Math.min(maxDim, temp.naturalHeight || temp.height);
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(temp, 0, 0, w, h);
-          const blobOut = await new Promise((resolve) =>
-            canvas.toBlob(resolve, "image/jpeg", 0.7)
-          );
-          URL.revokeObjectURL(objectUrl);
-          return blobOut;
+          console.log('Response from background script:', response);
+          if (response && response.success) {
+            // Convert the dataURL back to a blob
+            const fetchRes = await fetch(response.dataUrl);
+            blob = await fetchRes.blob();
+          } else {
+            console.error(`Failed to fetch image via background: ${response?.error}`);
+            // As a last resort, try to draw directly, even though it may be "tainted"
+          }
+        } catch (e) {
+          console.error("SafeInnocence: Failed to communicate with background script:", e);
         }
       }
 
-      // último recurso: draw imageElement into canvas (same-origin or allowed)
-      const canvas = document.createElement("canvas");
-      const maxDim = 512;
-      let targetW = imgElement.naturalWidth || imgElement.width || 256;
-      let targetH = imgElement.naturalHeight || imgElement.height || 256;
-      if (targetW > maxDim || targetH > maxDim) {
-        const ratio = targetW / targetH;
-        if (targetW > targetH) {
-          targetW = maxDim;
-          targetH = Math.round(maxDim / ratio);
+      // If we still don't have a blob, try drawing to canvas (last resort)
+      if (!blob) {
+        console.log("SafeInnocence: Falling back to canvas drawing for image.");
+        const canvas = document.createElement("canvas");
+        const maxDim = 512;
+        const w = Math.min(maxDim, imgElement.naturalWidth || imgElement.width);
+        const h = Math.min(maxDim, imgElement.naturalHeight || imgElement.height);
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+
+        // Important: The image must already be loaded for this
+        if (imgElement.complete) {
+          ctx.drawImage(imgElement, 0, 0, w, h);
+          return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.8));
         } else {
-          targetH = maxDim;
-          targetW = Math.round(maxDim * ratio);
+          return null; // The image wasn't ready to be drawn
         }
       }
-      canvas.width = targetW;
-      canvas.height = targetH;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(imgElement, 0, 0, targetW, targetH);
-      return await new Promise((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", 0.7)
-      );
+
+      // If we got here with a blob, use it
+      if ("createImageBitmap" in window) {
+        return await createImageBitmap(blob);
+      }
+      return blob;
+
     } catch (err) {
-      // si se produce CORS/tainted -> devuelve null (skip)
+      // CORS error when drawing to canvas would be caught here
+      console.warn(`SafeInnocence: getImageData failed due to security/CORS issue for ${imgElement.src}`, err);
       return null;
     }
   }
@@ -1122,7 +1115,7 @@ class ContentAnalyzer {
   async analyzeSocialMediaImages() {
     try {
       console.log("SafeInnocence: Starting social media image analysis");
-      const images = Array.from(document.querySelectorAll("img"));
+      const images = Array.from(document.querySelectorAll("img:not([src$='.svg'])"))
       console.log(`SafeInnocence: Found ${images.length} total images on page`);
 
       // Filter and categorize images
