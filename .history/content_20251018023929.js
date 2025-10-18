@@ -340,14 +340,12 @@ class ContentAnalyzer {
     // evita analizar iconos muy pequeños, sprites, data-urls, etc.
     try {
       if (!img.src) return false;
-      const w = img.naturalWidth || img.width || 0;
-      const h = img.naturalHeight || img.height || 0;
-      if (w*h < 12000) return false;
+      if ((img.naturalWidth || 0) * (img.naturalHeight || 0) < 5000)
+        return false; // muy pequeño
       if (img.dataset.safeInnocenceAnalyzed) return false;
       const srcLower = img.src.toLowerCase();
-      if (srcLower.endsWith('.svg') || srcLower.includes('sprite') || srcLower.includes('icon') || srcLower.includes('placeholder')) return false;
       if (srcLower.startsWith("data:")) return true; // inline -> analyze
-      if (srcLower.includes('avatar') || srcLower.includes('/profile/') || srcLower.includes('/emoji/')) return false;
+      if (srcLower.includes('avatar') || src.includes('/profile/') || src.includes('/emoji/')) return false;
 
       for (const kw of this.prefilterKeywords)
         if (srcLower.includes(kw)) return true;

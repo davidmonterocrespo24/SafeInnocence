@@ -345,7 +345,6 @@ class ContentAnalyzer {
       if (w*h < 12000) return false;
       if (img.dataset.safeInnocenceAnalyzed) return false;
       const srcLower = img.src.toLowerCase();
-      if (srcLower.endsWith('.svg') || srcLower.includes('sprite') || srcLower.includes('icon') || srcLower.includes('placeholder')) return false;
       if (srcLower.startsWith("data:")) return true; // inline -> analyze
       if (srcLower.includes('avatar') || srcLower.includes('/profile/') || srcLower.includes('/emoji/')) return false;
 
