@@ -517,7 +517,7 @@ class ContentAnalyzer {
       // Prompt para que la IA analice el contenido de la imagen
       const prompt = `Analyze this image for inappropriate content for children.
                     Check for: violence, adult content, self-harm, hate symbols, extremism, 
-                    cyberbullying, substance abuse, threats, disturbing imagery or  Men or women in underwear.
+                    cyberbullying, substance abuse, threats, disturbing imagery or   - Men or women in underwear.
 
                     Respond only with JSON format: {
                       "inappropriate": boolean, 
