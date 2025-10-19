@@ -51,6 +51,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'getSettings') {
     getSettings().then(sendResponse);
     return true; // Keep channel open for async response
+  } else if (request.type === 'closeCurrentTab') {
+    // Handle tab close request from content script
+    if (sender.tab && sender.tab.id) {
+      chrome.tabs.remove(sender.tab.id)
+        .then(() => {
+          sendResponse({ success: true });
+        })
+        .catch(error => {
+          console.error('SafeInnocence: Error closing tab:', error);
+          sendResponse({ success: false, error: error.message });
+        });
+    } else {
+      sendResponse({ success: false, error: 'No tab ID available' });
+    }
+    return true; // Keep channel open for async response
   } else if (request.type === 'fetchImageAsDataURL') {
     // Handle cross-origin image fetching
     fetch(request.url)

@@ -1484,11 +1484,23 @@ class ContentAnalyzer {
       font-size: 16px;
       font-weight: bold;
       font-family: Arial, sans-serif;
+      transition: background 0.3s ease;
     `;
-    goBackButton.onclick = () => window.history.back();
+    goBackButton.onmouseover = () => { goBackButton.style.background = '#b71c1c'; };
+    goBackButton.onmouseout = () => { goBackButton.style.background = '#d32f2f'; };
+    goBackButton.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        // If there's no history, navigate to a safe page
+        window.location.href = 'about:blank';
+      }
+    };
 
     const closeButton = document.createElement("button");
-    closeButton.textContent = "Close Page";
+    closeButton.textContent = "Close Tab";
     closeButton.style.cssText = `
       padding: 12px 24px;
       background: #666;
@@ -1498,8 +1510,25 @@ class ContentAnalyzer {
       cursor: pointer;
       font-size: 16px;
       font-family: Arial, sans-serif;
+      transition: background 0.3s ease;
     `;
-    closeButton.onclick = () => window.close();
+    closeButton.onmouseover = () => { closeButton.style.background = '#555'; };
+    closeButton.onmouseout = () => { closeButton.style.background = '#666'; };
+    closeButton.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Try to close the tab using Chrome extension API
+      chrome.runtime.sendMessage({ type: 'closeCurrentTab' }, (response) => {
+        if (!response || !response.success) {
+          // Fallback: try window.close()
+          window.close();
+          // If window.close() doesn't work, navigate to blank page
+          setTimeout(() => {
+            window.location.href = 'about:blank';
+          }, 100);
+        }
+      });
+    };
 
     buttonContainer.appendChild(goBackButton);
     buttonContainer.appendChild(closeButton);
