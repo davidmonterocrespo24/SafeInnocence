@@ -49,7 +49,7 @@ SafeInnocence uses Chrome's **Gemini Nano AI** model to analyze web pages in rea
 
 SafeInnocence leverages Chrome's powerful on-device AI APIs:
 
-### 1. **Prompt API (LanguageModel)** ⭐ Primary Engine
+1. **Prompt API (LanguageModel)** ⭐ Primary Engine
 - **Purpose**: Content safety analysis for both text and images
 - **Capabilities**: Multimodal analysis (text + images)
 - **Model**: Gemini Nano
@@ -59,34 +59,7 @@ SafeInnocence leverages Chrome's powerful on-device AI APIs:
   - Comment and post filtering on social media
   - Severity assessment (low/medium/high)
   - Category detection (violence, adult content, hate speech, etc.)
-- **Configuration**:
-  ```javascript
-  LanguageModel.create({
-    systemPrompt: "Content safety analyzer for child protection...",
-    expectedInputs: [
-      { type: "text", languages: ["en", "es"] },
-      { type: "image" }
-    ],
-    expectedOutputs: [{ type: "text", languages: ["en"] }],
-    outputLanguage: "en"
-  })
-  ```
 
-### 2. **Summarizer API**
-- **Purpose**: Content summarization for faster text analysis
-- **Capabilities**: Condense long text into key points
-- **Use Cases**:
-  - Summarizing page content before safety analysis
-  - Reducing processing time for long articles
-  - Extracting main themes from text-heavy pages
-- **Configuration**:
-  ```javascript
-  Summarizer.create({
-    type: "key-points",
-    format: "plain-text",
-    length: "short"
-  })
-  ```
 
 ## Features In-Depth
 
@@ -97,7 +70,6 @@ SafeInnocence leverages Chrome's powerful on-device AI APIs:
 - **Size Prioritization**: Analyzes larger images first (more likely to contain harmful content)
 - **Smart Caching**: Remembers analysis results to avoid re-processing (24-hour cache)
 - **Cross-Origin Handling**: Safely processes images from different domains
-- **YouTube Integration**: Automatically disables video links when thumbnails are blocked
 - **Progress Indicator**: Real-time progress bar showing analysis status
 - **Viewport Optimization**: Prioritizes visible images over off-screen content
 
@@ -115,21 +87,8 @@ SafeInnocence leverages Chrome's powerful on-device AI APIs:
   - ⚡ Extremism & Radicalization
   - 📰 Misinformation
 
-#### 3. Social Media Special Mode
-Platforms with intelligent content filtering (blocks content, not the entire platform):
-- **YouTube**: Blurs inappropriate thumbnails, disables video links
-- **Instagram**: Filters posts and stories
-- **Twitter/X**: Analyzes tweets and media
-- **Facebook**: Scans posts and comments
-- **TikTok**: Reviews video thumbnails and comments
-- **Reddit**: Checks posts and comments
-- **Discord**: Monitors messages
-- **LinkedIn**: Content safety
-- **Pinterest**: Image filtering
-- **Tumblr**: Post analysis
-- **Google Search**: Safe search enhancement
 
-**Smart Blocking Logic**:
+#### 3.Smart Blocking Logic**:
 - Social media/search engines: Blocks content individually + temporary page block if threshold exceeded (does NOT add to blocked sites list)
 - Regular websites: Blocks content + permanent page block if threshold exceeded (saves to blocked sites list)
 
@@ -283,24 +242,6 @@ Access settings via:
 
 #### Recommended Settings for Children
 
-**Maximum Protection**:
-```
-Sensitivity: High
-Block Threshold: 3
-✅ Analyze Images
-✅ Analyze Text Content
-✅ Show Notifications
-✅ Master Password enabled
-```
-
-**Balanced Protection** (teens):
-```
-Sensitivity: Medium
-Block Threshold: 5
-✅ Analyze Images
-✅ Analyze Text Content
-❌ Show Notifications
-```
 
 ### Managing Blocked Sites
 
@@ -331,7 +272,7 @@ Page Load
     ↓
 Detect Platform (Social Media / Search Engine / Regular)
     ↓
-Initialize AI Models (Prompt API + Summarizer)
+Initialize AI Models (Prompt API )
     ↓
 Show Progress Indicator
     ↓
@@ -554,13 +495,6 @@ SafeInnocence is designed with **privacy-first principles**:
 - ✅ Multi-category content detection (10 categories)
 - ✅ Severity-based weighting (high=5, medium=3, low=1)
 
-**Bug Fixes**:
-- 🐛 Fixed null pointer exception in blurOrRemoveImage
-- 🐛 Fixed block modal not appearing when threshold exceeded
-- 🐛 Fixed progress indicator timing issues
-- 🐛 Fixed analyzePage return value for proper flow control
-- 🐛 Fixed CORS issues with cross-origin images
-- 🐛 Fixed theme persistence across sessions
 
 **Technical Improvements**:
 - ⚡ Optimized image analysis pipeline
